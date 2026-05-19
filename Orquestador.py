@@ -1,4 +1,5 @@
 import subprocess
+import threading
 from google import genai
 from google.api_core.exceptions import GoogleAPIError
 from dotenv import load_dotenv
@@ -41,6 +42,31 @@ SYSTEM_RECONOCIMIENTO = (
 # Estado global del scan
 _cancelar = False
 _en_curso = False
+
+# Estado de confirmación
+_evento_confirmacion = threading.Event()
+_confirmacion_aprobada = False
+_accion_pendiente = ""
+_esperando_confirmacion = False
+
+
+def esperar_confirmacion(descripcion: str) -> bool:
+    global _esperando_confirmacion, _accion_pendiente, _confirmacion_aprobada
+
+    _accion_pendiente = descripcion
+    _esperando_confirmacion = True
+    _evento_confirmacion.clear()
+    _evento_confirmacion.wait()  # el hilo se pausa aquí hasta que llegue respuesta
+    _esperando_confirmacion = False
+
+    return _confirmacion_aprobada
+
+
+def responder_confirmacion(aprobado: bool):
+    global _confirmacion_aprobada
+
+    _confirmacion_aprobada = aprobado
+    _evento_confirmacion.set()  # desbloquea el hilo pausado
 
 
 def crear_chat(client, system_prompt):
@@ -110,6 +136,10 @@ def iniciar_scan(target: str) -> dict:
     while i_commander < N_COMMANDER and not _cancelar:
         logs.append(f"[CICLO COMMANDER {i_commander + 1}]")
 
+        if not esperar_confirmacion(f"Commander ciclo {i_commander + 1}: enviar prompt → {prompt_commander}"):
+            logs.append("[Rechazado por el usuario — scan cancelado]")
+            break
+
         respuesta_commander = preguntar(chat_commander, prompt_commander)
         mostrar("Commander", respuesta_commander)
 
@@ -132,6 +162,11 @@ def iniciar_scan(target: str) -> dict:
             i_recon = 0
             while i_recon < N_RECON and not _cancelar:
                 logs.append(f"  [CICLO RECON {i_recon + 1}]")
+
+                if not esperar_confirmacion(f"Recon ciclo {i_recon + 1}: ejecutar → {prompt_recon}"):
+                    logs.append("  [Rechazado por el usuario — scan cancelado]")
+                    _cancelar = True
+                    break
 
                 respuesta_recon = preguntar(chat_reconocimiento, prompt_recon)
                 mostrar("Reconocimiento", respuesta_recon)
@@ -173,4 +208,6 @@ def iniciar_scan(target: str) -> dict:
 def cancelar_scan():
     global _cancelar
     _cancelar = True
+    # si está pausado esperando confirmación, lo desbloquea con rechazo
+    responder_confirmacion(False)
     return {"status": "cancelling"}
