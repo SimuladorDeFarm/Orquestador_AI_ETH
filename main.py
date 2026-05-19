@@ -38,6 +38,11 @@ def root():
     return {"mensaje": "Dani-ETH online"}
 
 
+@app.get("/scan/status")
+def scan_status():
+    return {"en_curso": _test_en_curso}
+
+
 @app.post("/scan/start")
 def start_scan(body: ScanRequest):
     if _test_en_curso:
