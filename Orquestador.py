@@ -5,23 +5,17 @@ from dotenv import load_dotenv
 import os
 
 
-#Carga las variables de entorno
 load_dotenv()
 
-#Guarda las apy keys en una variable
 commander_client = genai.Client(api_key=os.getenv("GEMINI_API_KEY"))
 recon_client = genai.Client(api_key=os.getenv("ORQUESTADOR_API_KEY"))
 
-# Prepara contenedor docker
 NOMBRE_CONTENEDOR = "dazzling_mayer"
-MAX_CICLOS = 2
 
-#Posibles objetivos
 OBJETIVO_ORQUESTADOR = "orquestador"
 OBJETIVO_RECONOCIMIENTO = "reconocimiento"
 OBJETIVO_EXIT = "exit"
 
-# pront inicial del commander
 SYSTEM_COMMANDER = (
     "Eres el agente Commander de un sistema de ethical hacking automatizado. "
     "Recibes objetivos y asignas tareas generales a otros agentes. No generas comandos tú mismo. "
@@ -34,7 +28,6 @@ SYSTEM_COMMANDER = (
     "No uses markdown, no uses listas, no uses saltos de línea. Una sola frase con la tarea y el ;objetivo al final."
 )
 
-# Pront inicial de reconocimiento
 SYSTEM_RECONOCIMIENTO = (
     "Eres el agente Reconocimiento de un sistema de ethical hacking automatizado. "
     "Ejecutas comandos de reconocimiento y analizas sus resultados. "
@@ -44,6 +37,10 @@ SYSTEM_RECONOCIMIENTO = (
     "Si ya tienes conclusiones responde con un resumen minimalista (hallazgos y comandos ejecutados) y ;orquestador al final. "
     "No uses markdown. Hablas con otra IA, sé breve."
 )
+
+# Estado global del scan
+_cancelar = False
+_en_curso = False
 
 
 def crear_chat(client, system_prompt):
@@ -61,7 +58,7 @@ def preguntar(chat, mensaje):
         print(f"[ERROR API Gemini] {e}")
         return None
 
-# Separa el promp del objetivo al que le habla
+
 def extraer_objetivo(respuesta):
     partes = respuesta.rsplit(";", 1)
     if len(partes) == 2:
@@ -82,11 +79,6 @@ def mostrar(agente, respuesta):
         print(extraer_mensaje(respuesta))
 
 
-def confirmar(accion):
-    respuesta = input(f"\n[?] {accion} [Y/n]: ").strip().lower()
-    return respuesta in ("y", "")
-
-
 def ejecutar_en_docker(comando):
     cmd = ["docker", "exec", NOMBRE_CONTENEDOR] + comando.split()
     resultado = subprocess.run(cmd, capture_output=True, text=True)
@@ -96,31 +88,27 @@ def ejecutar_en_docker(comando):
         return resultado.stderr
 
 
-if __name__ == "__main__":
+def iniciar_scan(target: str) -> dict:
+    global _cancelar, _en_curso
 
-    # Máximo de ciclos por cada agente (modificar según necesidad)
+    _cancelar = False
+    _en_curso = True
+    logs = []
+
     N_COMMANDER = 100
     N_RECON = 100
 
-    # Crea un chat con cada IA
     chat_commander = crear_chat(commander_client, SYSTEM_COMMANDER)
     chat_reconocimiento = crear_chat(recon_client, SYSTEM_RECONOCIMIENTO)
 
-    # Prompt inicial del Commander (se envía en el primer ciclo)
     prompt_commander = (
-        "Busca la flag oculta, en este caso es una carpeta secreta. Imagina que eres un pentester y haces un reconocimiento con las herramientas nmap y ffuf"
-        "Solo se cuenta con la herramienta nmap, ffuf, no uses curl ni ningun otro comando. La ip objetivo es localhost."
+        f"Busca la flag oculta, en este caso es una carpeta secreta. Imagina que eres un pentester y haces un reconocimiento con las herramientas nmap y ffuf. "
+        f"Solo se cuenta con la herramienta nmap y ffuf, no uses curl ni ningun otro comando. La ip objetivo es {target}."
     )
 
     i_commander = 0
-    while i_commander < N_COMMANDER:
-        print(f"\n{'#' * 40}")
-        print(f"  CICLO COMMANDER {i_commander + 1}/{N_COMMANDER}")
-        print(f"{'#' * 40}")
-
-        if not confirmar(f"Enviar prompt a Commander (ciclo {i_commander + 1})"):
-            print("[Cancelado por el usuario]")
-            break
+    while i_commander < N_COMMANDER and not _cancelar:
+        logs.append(f"[CICLO COMMANDER {i_commander + 1}]")
 
         respuesta_commander = preguntar(chat_commander, prompt_commander)
         mostrar("Commander", respuesta_commander)
@@ -128,25 +116,22 @@ if __name__ == "__main__":
         if not respuesta_commander:
             break
 
+        logs.append(f"Commander: {extraer_mensaje(respuesta_commander)}")
+
         objetivo_commander = extraer_objetivo(respuesta_commander)
         contenido_commander = extraer_mensaje(respuesta_commander)
 
         if objetivo_commander == OBJETIVO_EXIT:
-            print("\n[Commander ha finalizado la sesión]\n")
+            logs.append("[Commander ha finalizado la sesión]")
             break
 
-        # Ciclo interno de reconocimiento
         if objetivo_commander in (OBJETIVO_RECONOCIMIENTO, None):
             prompt_recon = contenido_commander
-            conclusiones_recon = prompt_recon  # fallback si no hay ciclos
+            conclusiones_recon = prompt_recon
 
             i_recon = 0
-            while i_recon < N_RECON:
-                print(f"\n  --- Ciclo recon {i_recon + 1}/{N_RECON} ---")
-
-                if not confirmar(f"Enviar prompt a Reconocimiento (ciclo {i_recon + 1})"):
-                    print("[Cancelado por el usuario]")
-                    break
+            while i_recon < N_RECON and not _cancelar:
+                logs.append(f"  [CICLO RECON {i_recon + 1}]")
 
                 respuesta_recon = preguntar(chat_reconocimiento, prompt_recon)
                 mostrar("Reconocimiento", respuesta_recon)
@@ -157,23 +142,35 @@ if __name__ == "__main__":
                 objetivo_recon = extraer_objetivo(respuesta_recon)
                 contenido_recon = extraer_mensaje(respuesta_recon)
 
+                logs.append(f"  Recon: {contenido_recon}")
+
                 if objetivo_recon in (OBJETIVO_EXIT, OBJETIVO_ORQUESTADOR):
                     conclusiones_recon = contenido_recon
                     break
 
                 elif objetivo_recon == OBJETIVO_RECONOCIMIENTO:
                     output = ejecutar_en_docker(contenido_recon)
+                    logs.append(f"  Docker output: {output.strip()}")
                     print(f"\n[Docker output]\n{output}")
-                    prompt_recon = output  # output del comando es el siguiente prompt
+                    prompt_recon = output
 
                 else:
-                    print(f"[!] Objetivo desconocido: '{objetivo_recon}'")
+                    logs.append(f"  [!] Objetivo desconocido: '{objetivo_recon}'")
                     conclusiones_recon = contenido_recon
                     break
 
                 i_recon += 1
 
-            # Las conclusiones del recon son el siguiente prompt del Commander
             prompt_commander = conclusiones_recon
 
         i_commander += 1
+
+    _en_curso = False
+    status = "cancelled" if _cancelar else "finished"
+    return {"status": status, "logs": logs}
+
+
+def cancelar_scan():
+    global _cancelar
+    _cancelar = True
+    return {"status": "cancelling"}
