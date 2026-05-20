@@ -24,8 +24,8 @@ SYSTEM_COMMANDER = (
     "Ejemplo correcto: 'Escanea los puertos de localhost con las herramientas disponibles;reconocimiento'. (Esto es solo un ejemplo, no es el objetivo)"
     "Usa ;reconocimiento para delegar al agente de reconocimiento. "
     "Usa ;exit cuando el pentest haya concluido. "
-    "Debes encontrar la flag oculta en el sistema, tiene el formato de flag + llave + texto + cierre llave"
-    "Por ahora solo está reconocimiento así que debes mandarlo a el a buscar la flag"
+    "Debes encontrar el puerto abierto en el sistema"
+    "Por ahora solo está reconocimiento así que debes mandarlo a el a buscar l puerto"
     "No uses markdown, no uses listas, no uses saltos de línea. Una sola frase con la tarea y el ;objetivo al final."
 )
 
@@ -121,84 +121,60 @@ def iniciar_scan(target: str) -> dict:
     _en_curso = True
     logs = []
 
-    N_COMMANDER = 100
-    N_RECON = 100
+    chats = {
+        OBJETIVO_RECONOCIMIENTO: crear_chat(recon_client, SYSTEM_RECONOCIMIENTO),
+        "commander": crear_chat(commander_client, SYSTEM_COMMANDER),
+    }
 
-    chat_commander = crear_chat(commander_client, SYSTEM_COMMANDER)
-    chat_reconocimiento = crear_chat(recon_client, SYSTEM_RECONOCIMIENTO)
-
-    prompt_commander = (
-        f"Busca la flag oculta, en este caso es una carpeta secreta. Imagina que eres un pentester y haces un reconocimiento con las herramientas nmap y ffuf. "
+    estado = "commander"
+    mensaje = (
+        f"Busca el puerto abierto. Imagina que eres un pentester y haces un reconocimiento con las herramientas nmap y ffuf. "
         f"Solo se cuenta con la herramienta nmap y ffuf, no uses curl ni ningun otro comando. La ip objetivo es {target}."
     )
 
-    i_commander = 0
-    while i_commander < N_COMMANDER and not _cancelar:
-        logs.append(f"[CICLO COMMANDER {i_commander + 1}]")
+    while estado != OBJETIVO_EXIT and not _cancelar:
+        logs.append(f"[{estado.upper()}] {mensaje}")
 
-        if not esperar_confirmacion(f"Commander ciclo {i_commander + 1}: enviar prompt → {prompt_commander}"):
+        if not esperar_confirmacion(f"{estado.capitalize()}: → {mensaje}"):
             logs.append("[Rechazado por el usuario — scan cancelado]")
             break
 
-        respuesta_commander = preguntar(chat_commander, prompt_commander)
-        mostrar("Commander", respuesta_commander)
+        respuesta = preguntar(chats[estado], mensaje)
+        mostrar(estado, respuesta)
 
-        if not respuesta_commander:
+        if not respuesta:
             break
 
-        logs.append(f"Commander: {extraer_mensaje(respuesta_commander)}")
+        objetivo = extraer_objetivo(respuesta)
+        contenido = extraer_mensaje(respuesta)
+        logs.append(f"  respuesta: {contenido} → próximo: {objetivo}")
 
-        objetivo_commander = extraer_objetivo(respuesta_commander)
-        contenido_commander = extraer_mensaje(respuesta_commander)
+        if estado == "commander":
+            if objetivo == OBJETIVO_EXIT:
+                logs.append("[Commander ha finalizado la sesión]")
+                estado = OBJETIVO_EXIT
 
-        if objetivo_commander == OBJETIVO_EXIT:
-            logs.append("[Commander ha finalizado la sesión]")
-            break
+            elif objetivo == OBJETIVO_RECONOCIMIENTO:
+                estado = OBJETIVO_RECONOCIMIENTO
+                mensaje = contenido
 
-        if objetivo_commander in (OBJETIVO_RECONOCIMIENTO, None):
-            prompt_recon = contenido_commander
-            conclusiones_recon = prompt_recon
+        elif estado == OBJETIVO_RECONOCIMIENTO:
+            if objetivo == OBJETIVO_RECONOCIMIENTO:
+                # el agente recon pide ejecutar un comando
+                output = ejecutar_en_docker(contenido)
+                logs.append(f"  docker: {output.strip()}")
+                print(f"\n[Docker output]\n{output}")
+                mensaje = output
+                # se queda en reconocimiento con el output como nuevo mensaje
 
-            i_recon = 0
-            while i_recon < N_RECON and not _cancelar:
-                logs.append(f"  [CICLO RECON {i_recon + 1}]")
+            elif objetivo == OBJETIVO_ORQUESTADOR:
+                # recon terminó, devuelve conclusiones al commander
+                estado = "commander"
+                mensaje = contenido
 
-                if not esperar_confirmacion(f"Recon ciclo {i_recon + 1}: ejecutar → {prompt_recon}"):
-                    logs.append("  [Rechazado por el usuario — scan cancelado]")
-                    _cancelar = True
-                    break
-
-                respuesta_recon = preguntar(chat_reconocimiento, prompt_recon)
-                mostrar("Reconocimiento", respuesta_recon)
-
-                if not respuesta_recon:
-                    break
-
-                objetivo_recon = extraer_objetivo(respuesta_recon)
-                contenido_recon = extraer_mensaje(respuesta_recon)
-
-                logs.append(f"  Recon: {contenido_recon}")
-
-                if objetivo_recon in (OBJETIVO_EXIT, OBJETIVO_ORQUESTADOR):
-                    conclusiones_recon = contenido_recon
-                    break
-
-                elif objetivo_recon == OBJETIVO_RECONOCIMIENTO:
-                    output = ejecutar_en_docker(contenido_recon)
-                    logs.append(f"  Docker output: {output.strip()}")
-                    print(f"\n[Docker output]\n{output}")
-                    prompt_recon = output
-
-                else:
-                    logs.append(f"  [!] Objetivo desconocido: '{objetivo_recon}'")
-                    conclusiones_recon = contenido_recon
-                    break
-
-                i_recon += 1
-
-            prompt_commander = conclusiones_recon
-
-        i_commander += 1
+            else:
+                logs.append(f"  [!] Objetivo desconocido: '{objetivo}'")
+                break
 
     _en_curso = False
     status = "cancelled" if _cancelar else "finished"
