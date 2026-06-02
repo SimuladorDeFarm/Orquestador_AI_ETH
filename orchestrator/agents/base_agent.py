@@ -24,11 +24,33 @@ _tools = [
     }
 ]
 
+_tool_planificar = [
+    {
+        "type": "function",
+        "function": {
+            "name": "planificar_tareas",
+            "description": "Genera la lista de tareas de reconocimiento a ejecutar basándose en los hallazgos del scan inicial.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "tareas": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "Lista de comandos a ejecutar en orden",
+                    }
+                },
+                "required": ["tareas"],
+            },
+        },
+    }
+]
+
 
 class BaseAgent:
     def __init__(self, system_prompt: str):
         self.system_prompt = system_prompt
         self.historial = [{"role": "system", "content": system_prompt}]
+        self.lista_tareas = []
 
     def preguntar(self, mensaje: str) -> str | None:
         self.historial.append({"role": "user", "content": mensaje})
@@ -69,3 +91,20 @@ class BaseAgent:
                 texto = choice.message.content.strip()
                 self.historial.append({"role": "assistant", "content": texto})
                 return texto
+
+    def generar_tareas(self, mensaje: str) -> list:
+        try:
+            response = _client.chat.completions.create(
+                model=DEEPSEEK_MODEL,
+                messages=self.historial + [{"role": "user", "content": mensaje}],
+                tools=_tool_planificar,
+                tool_choice={"type": "function", "function": {"name": "planificar_tareas"}},
+            )
+            tool_call = response.choices[0].message.tool_calls[0]
+            args = json.loads(tool_call.function.arguments)
+            self.lista_tareas = args["tareas"]
+            print(f"[TAREAS GENERADAS] {self.lista_tareas}")
+            return self.lista_tareas
+        except Exception as e:
+            print(f"[ERROR generar_tareas] {e}")
+            return []

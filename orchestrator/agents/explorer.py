@@ -22,13 +22,15 @@ agente = BaseAgent(
     "La lista de tareas no debe exeder los 5 puntos, cada tarea debe poder realizarse con un solo comando"
     "El primer promt que se te enviará tendra la ip objetivo, se realizará un escaneo rapido y ya con la respusta generaras las tareas"
     "Recuerda que a veces el no haber hallazgos es un hallazgo, significa que todo esta OK"
+    "La lista de tareas tiene su propio call y debes usarlo siempre para generar las tareas"
 )
 
 
-respuesta = agente.preguntar("muestrame las instrucciones iniciales que te di")
+agente.preguntar("Haz un escano rápido, ip objetivo: localhost")
 
+agente.generar_tareas("genera la lista de tareas")
+print(agente.lista_tareas)
 
-print(respuesta)
 
 """
 comand0 = ejecutar_en_docker("ls")
