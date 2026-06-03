@@ -1,5 +1,6 @@
 from agents.explorer_agent import ExplorerAgent
 from agents.judge import juez
+from agents.reporter import reportador
 from core.runner_client import ejecutar_en_docker
 
 
@@ -19,7 +20,7 @@ agente = ExplorerAgent(
     "Un agente Juez evaluará si tu trabajo fue suficiente o debe repetirse. "
 
     "HERRAMIENTAS DISPONIBLES: "
-    "nmap, herramientas nativas de Linux, ffuf (wordlist: /home/ubuntu/common.txt). "
+    "nmap, herramientas nativas de Linux, ffuf (wordlist: /home/ubuntu/common.txt), samba. "
     "Para ejecutar cualquier comando usa siempre la tool ejecutar_comando. "
     "Para generar la lista de tareas usa siempre la tool planificar_tareas. "
 
@@ -51,7 +52,7 @@ agente = ExplorerAgent(
     "Durante la generación del reporte NO tienes acceso a herramientas. Cualquier intento de llamar ejecutar_comando, planificar_tareas o finalizar_iteracion será un error. Solo puedes escribir texto plano en markdown. "
     "Recuerda que no encontrar anomalías también es un hallazgo válido."
 
-    "Hya dos flag escondidas en el sistema objetivo, encuentralas"
+    #"Hya dos flag escondidas en el sistema objetivo, encuentralas"
 )
 
 def decidir_iteracion():
@@ -116,14 +117,22 @@ def explorador(primera_iteracion: bool = True):
 
 def iterador():
     i = 0
-    while not juez.aprueba and i < 5:
+    reportes = []
+    while not juez.aprueba and i < 3:
         reporte = explorador(primera_iteracion=(i == 0))
+        reportes.append(reporte)
         i += 1
         decidir_iteracion()
         print("\n" + "=" * 50)
         print("  JUEZ — EVALUACIÓN DEL REPORTE")
         print("=" * 50)
         juez.evaluar_reporte(reporte)
+
+    print("\n" + "=" * 50)
+    print("  REPORTE EJECUTIVO FINAL")
+    print("=" * 50)
+    ruta = reportador.generar_reporte(reportes)
+    print(f"Reporte guardado en: {ruta}")
 
 
 iterador()
