@@ -41,6 +41,23 @@ _tool_decidir = [
     },
 ]
 
+_tool_aprobar = [
+    {
+        "type": "function",
+        "function": {
+            "name": "aprobar_exploracion",
+            "description": "Aprueba el reporte de exploración indicando que la información es suficiente para continuar con la fase de explotación.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "razon": {"type": "string", "description": "Motivo por el que considera que la exploración fue suficiente"},
+                },
+                "required": ["razon"],
+            },
+        },
+    },
+]
+
 _tool_planificar = [
     {
         "type": "function",
@@ -69,6 +86,7 @@ class BaseAgent:
         self.historial = [{"role": "system", "content": system_prompt}]
         self.lista_tareas = []
         self.continuar_iteracion = True
+        self.aprueba = False
 
     def preguntar(self, mensaje: str, usar_tools: bool = True) -> str | None:
         self.historial.append({"role": "user", "content": mensaje})
@@ -121,6 +139,27 @@ class BaseAgent:
             texto = choice.message.content.strip()
             self.historial.append({"role": "assistant", "content": texto})
             return texto
+
+    def evaluar_reporte(self, reporte: str) -> None:
+        try:
+            response = _client.chat.completions.create(
+                model=DEEPSEEK_MODEL,
+                messages=self.historial + [{"role": "user", "content": reporte}],
+                tools=_tool_aprobar,
+                tool_choice="auto",
+            )
+            choice = response.choices[0]
+            if choice.finish_reason == "tool_calls":
+                tool_call = choice.message.tool_calls[0]
+                args = json.loads(tool_call.function.arguments)
+                self.aprueba = True
+                print(f"\n[JUEZ] APROBADO — {args.get('razon', '')}")
+            else:
+                feedback = choice.message.content.strip()
+                print(f"\n[JUEZ] RECHAZADO — Se requiere otra iteración.")
+                print(f"[JUEZ] Feedback: {feedback}")
+        except Exception as e:
+            print(f"[ERROR evaluar_reporte] {e}")
 
     def decidir_iteracion(self, mensaje: str) -> None:
         try:

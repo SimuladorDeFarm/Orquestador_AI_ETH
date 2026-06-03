@@ -1,4 +1,5 @@
 from agents.base_agent import BaseAgent
+from agents.judge import juez
 from core.runner_client import ejecutar_en_docker
 
 
@@ -35,10 +36,12 @@ agente = BaseAgent(
     "Al finalizar cada iteración se te preguntará si necesitas continuar. "
     "Si la información es suficiente, usa la tool finalizar_iteracion. Si no lo es, no la uses y el sistema iniciará una nueva iteración. "
     "El sistema limita las iteraciones a 3 por código. "
+    "Si creías haber terminado pero el sistema te pide una nueva iteración, significa que el agente Juez evaluó tu reporte y consideró que la exploración fue insuficiente. En ese caso debes profundizar en lo que no cubriste, no repetir lo que ya hiciste. "
 
     "CRITERIO PARA TERMINAR: "
     "Encontrar qué puertos están abiertos NO es suficiente para terminar. Debes interactuar con cada servicio descubierto. "
     "Para servicios HTTP: como mínimo lee el contenido de la página raíz y haz enumeración de rutas con ffuf. "
+    "Si durante la exploración descubres una ruta o archivo que no has visitado aún, NO termines sin visitarlo. "
     "Solo termina cuando hayas obtenido información útil de cada servicio encontrado, o cuando hayas agotado los vectores razonables. "
     "No repitas comandos que ya ejecutaste en iteraciones anteriores. "
     "El límite absoluto para continuar es que todos los puertos estén cerrados y no haya nada que explorar. "
@@ -108,22 +111,19 @@ def explorador(primera_iteracion: bool = True):
     )
     reporte = agente.preguntar(prompt, usar_tools=False)
     print(reporte)
-
-
+    return reporte
 
 
 def iterador():
     i = 0
-    while agente.continuar_iteracion and i < 3:
-        explorador(primera_iteracion=(i == 0))
+    while not juez.aprueba and i < 5:
+        reporte = explorador(primera_iteracion=(i == 0))
         i += 1
         decidir_iteracion()
+        print("\n" + "=" * 50)
+        print("  JUEZ — EVALUACIÓN DEL REPORTE")
+        print("=" * 50)
+        juez.evaluar_reporte(reporte)
 
 
 iterador()
-
-"""
-comand0 = ejecutar_en_docker("ls")
-
-print(comand0)
-"""
