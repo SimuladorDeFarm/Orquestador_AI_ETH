@@ -6,33 +6,58 @@ Orquestador autónomo de ethical hacking con IA (Multi-Agent System) que ejecuta
 
 ## Estado actual
 
-El proyecto se encuentra en refactorización activa. Conviven dos versiones:
-
-- `V1/` — versión inicial funcional con Gemini API y endpoints de control via FastAPI
-- `orchestrator/` — nueva arquitectura modular con DeepSeek API y tool calling
-
-El desarrollo activo ocurre en `orchestrator/`.
+El desarrollo activo ocurre en `orchestrator/`. La carpeta `V1/` es la versión inicial con Gemini API y FastAPI, conservada como referencia.
 
 ---
 
-## Arquitectura (orchestrator/)
+## Arquitectura de agentes
+
+```
+BaseAgent              → historial, preguntar() genérico
+  ├── IterableAgent    → + continuar_iteracion, decidir_iteracion()
+  │     └── ExplorerAgent  → + lista_tareas, preguntar() con Docker, generar_tareas()
+  └── JudgeAgent       → + aprueba, evaluar_reporte()
+
+ReporterAgent(BaseAgent) → generar_reporte(), guarda .md en reports/
+```
+
+### Flujo de ejecución
+
+```
+iterador()
+  └── explorador()
+        ├── FASE 1 — escaneo inicial con nmap (solo primera iteración)
+        │           o generar nuevas tareas (iteraciones siguientes)
+        ├── FASE 2 — ejecución de tareas en Docker
+        └── FASE 3 — reporte markdown de la iteración
+  └── decidir_iteracion()   ← Explorer decide si continuar
+  └── juez.evaluar_reporte() ← Juez aprueba o rechaza
+        └── si aprueba → sale del loop
+        └── si rechaza → nueva iteración (máx. 3)
+  └── reportador.generar_reporte()  ← reporte ejecutivo final guardado en reports/
+```
+
+---
+
+## Estructura del proyecto
 
 ```
 orchestrator/
-├── main.py
-├── config.py                  # API keys y parámetros globales
+├── config.py                      # API keys y parámetros globales
+├── reports/                       # Reportes ejecutivos generados (markdown)
 ├── agents/
-│   ├── base_agent.py          # Conexión DeepSeek, tool calling, historial
-│   ├── explorer.py            # Agente de reconocimiento (en desarrollo)
-│   ├── commander.py
-│   ├── exploiter.py
-│   ├── reporter.py
-│   └── judge.py
-├── core/
-│   ├── runner_client.py       # Ejecuta comandos en Docker
-│   ├── campaign_manager.py
-│   └── scope_guard.py
-└── models/
+│   ├── base_agent.py              # Clase base: historial + preguntar()
+│   ├── iterable_agent.py          # + continuar_iteracion, decidir_iteracion()
+│   ├── explorer_agent.py          # + lista_tareas, Docker, generar_tareas()
+│   ├── judge_agent.py             # + aprueba, evaluar_reporte()
+│   ├── reporter_agent.py          # + generar_reporte() con guardado a archivo
+│   ├── explorer.py                # Instancia ExplorerAgent + funciones de flujo
+│   ├── judge.py                   # Instancia JudgeAgent + system prompt
+│   ├── reporter.py                # Instancia ReporterAgent + system prompt
+│   ├── commander.py               # (pendiente)
+│   └── exploiter.py               # (pendiente)
+└── core/
+    └── runner_client.py           # Ejecuta comandos en Docker vía subprocess
 ```
 
 ---
@@ -48,20 +73,16 @@ orchestrator/
 ## Instalación
 
 ```bash
-# 1. Clonar el repositorio
 git clone https://github.com/SimuladorDeFarm/dani-eth.git
 cd dani-eth
 
-# 2. Crear y activar entorno virtual
 python3 -m venv evn
 source evn/bin/activate
 
-# 3. Instalar dependencias
 pip install -r requirements.txt
 
-# 4. Configurar variables de entorno
 cp .env.example .env
-# Editar .env y agregar la API key de DeepSeek
+# Agregar la API key de DeepSeek en .env
 ```
 
 ---
@@ -77,42 +98,33 @@ DOCKER_CONTAINER=nombre_del_contenedor
 
 ## Ejecución
 
-El punto de entrada actual es el agente Explorer para pruebas:
-
 ```bash
 cd orchestrator
 python3 -m agents.explorer
 ```
 
-Esto ejecuta el flujo completo:
-1. Escaneo inicial con nmap
-2. Generación de lista de tareas por la IA
-3. Ejecución de cada tarea en el contenedor Docker
-4. Reporte de hallazgos en markdown
+Antes de correr, ajusta el objetivo en [agents/explorer.py](orchestrator/agents/explorer.py):
 
-Para correr la API (V1, estable):
-
-```bash
-# Activar entorno virtual primero
-source evn/bin/activate
-uvicorn main:app --reload
+```python
+TARGET = "192.168.1.1"  # IP o dominio objetivo
 ```
+
+El flujo genera automáticamente un reporte markdown en `orchestrator/reports/reporte_YYYY-MM-DD_HH-MM-SS.md`.
 
 ---
 
 ## Contenedor Docker objetivo
 
-El agente ejecuta los comandos dentro de un contenedor Docker. Antes de correr el explorador, asegúrate de tener el contenedor activo y con algún servicio expuesto:
+Los comandos se ejecutan dentro del contenedor. Debe estar corriendo antes de lanzar el explorador:
 
 ```bash
-# Verificar que el contenedor está corriendo
 docker ps
 
-# Ejemplo: abrir un puerto en el contenedor
-docker exec -it nombre_contenedor nc -lnvp 8000 -k
+# Ejemplo: servir archivos en el contenedor
+docker exec -it nombre_contenedor python3 -m http.server 8000
 ```
 
-El nombre del contenedor se configura en `.env` con la variable `DOCKER_CONTAINER`.
+El nombre del contenedor se configura en `core/runner_client.py` con la variable `NOMBRE_CONTENEDOR`.
 
 ---
 
