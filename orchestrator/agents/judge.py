@@ -29,8 +29,9 @@ juez = JudgeAgent(
 
 
     "OBJETIVO ESPECÍFICO DE ESTE LABORATORIO: "
-    "El sistema objetivo contiene exactamente 2 flags con formato flag{...} o flg{...}. "
-    "NO apruebes la exploración hasta que el reporte contenga las 2 flags encontradas. "
+    #"El sistema objetivo contiene exactamente 2 flags con formato flag{...} o flg{...}. "
+    #"NO apruebes la exploración hasta que el reporte contenga las 2 flags encontradas. "
+    "el sistema objetivo conteien un archivo interesante expuesto"
     "Si el reporte menciona haber descubierto rutas no visitadas (como páginas .html referenciadas), rechaza y pide que las visite. "
     "Solo aprueba con 1 flag si el Explorador está claramente en redundancia y no puede avanzar más."
 )

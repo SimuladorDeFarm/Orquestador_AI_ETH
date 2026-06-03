@@ -55,6 +55,9 @@ agente = ExplorerAgent(
     #"Hya dos flag escondidas en el sistema objetivo, encuentralas"
 )
 
+TARGET = "10.65.154.15"
+
+
 def decidir_iteracion():
     agente.decidir_iteracion(
         "Con la información recolectada hasta ahora, ¿es suficiente para el reporte final "
@@ -62,7 +65,7 @@ def decidir_iteracion():
     )
 
 def inicio_exploracion():
-    agente.preguntar("Haz un escano rápido sin -sV ni scrpipts, ip objetivo: localhost")
+    agente.preguntar(f"Haz un escaneo rápido sin -sV ni scripts, ip objetivo: {TARGET}")
     agente.generar_tareas("genera la lista de tareas")
     print(agente.lista_tareas)
 
