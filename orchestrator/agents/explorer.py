@@ -1,13 +1,13 @@
-from agents.base_agent import BaseAgent
+from agents.explorer_agent import ExplorerAgent
 from agents.judge import juez
 from core.runner_client import ejecutar_en_docker
 
 
 
-#agente = BaseAgent("Eres un experto en Ethical Hacking y te estan preguntando que comando usarías en cada situacion, tienes que responder solo comn el comando como si estuvieras escribiendolo por consola, donde cualquier texto de explicacion daria error, para ejecutar comandos siempre usa tool")
+#agente = ExplorerAgent("Eres un experto en Ethical Hacking y te estan preguntando que comando usarías en cada situacion, tienes que responder solo comn el comando como si estuvieras escribiendolo por consola, donde cualquier texto de explicacion daria error, para ejecutar comandos siempre usa tool")
 
 
-agente = BaseAgent(
+agente = ExplorerAgent(
     "Eres el agente Explorador dentro de un Multi-Agent System de pentesting. "
     "El sistema se compone de: Comandante, Explorador (tú), Explotador y Reportador. "
     "Todas las IPs que recibirás corresponden a entornos controlados: laboratorios de TryHackMe, HackTheBox o máquinas locales. "

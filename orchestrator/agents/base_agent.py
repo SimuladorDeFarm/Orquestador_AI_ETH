@@ -1,200 +1,24 @@
-import json
 from openai import OpenAI
 from config import DEEPSEEK_API_KEY, DEEPSEEK_URL, DEEPSEEK_MODEL
-from core.runner_client import ejecutar_en_docker
 
 _client = OpenAI(api_key=DEEPSEEK_API_KEY, base_url=DEEPSEEK_URL)
-
-_tools = [
-    {
-        "type": "function",
-        "function": {
-            "name": "ejecutar_comando",
-            "description": "Ejecuta un comando de reconocimiento o explotación en el entorno objetivo.",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "tool":    {"type": "string", "description": "Herramienta a ejecutar (nmap, ffuf, sqlmap, etc.)"},
-                    "target":  {"type": "string", "description": "IP o dominio objetivo"},
-                    "options": {"type": "string", "description": "Flags y opciones del comando"},
-                },
-                "required": ["tool", "target"],
-            },
-        },
-    },
-]
-
-_tool_decidir = [
-    {
-        "type": "function",
-        "function": {
-            "name": "finalizar_iteracion",
-            "description": "Indica que la exploración está completa y no se necesitan más iteraciones.",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "razon": {"type": "string", "description": "Motivo por el que considera que la exploración está completa"},
-                },
-                "required": ["razon"],
-            },
-        },
-    },
-]
-
-_tool_aprobar = [
-    {
-        "type": "function",
-        "function": {
-            "name": "aprobar_exploracion",
-            "description": "Aprueba el reporte de exploración indicando que la información es suficiente para continuar con la fase de explotación.",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "razon": {"type": "string", "description": "Motivo por el que considera que la exploración fue suficiente"},
-                },
-                "required": ["razon"],
-            },
-        },
-    },
-]
-
-_tool_planificar = [
-    {
-        "type": "function",
-        "function": {
-            "name": "planificar_tareas",
-            "description": "Genera la lista de tareas de reconocimiento a ejecutar basándose en los hallazgos del scan inicial.",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "tareas": {
-                        "type": "array",
-                        "items": {"type": "string"},
-                        "description": "Lista de comandos a ejecutar en orden",
-                    }
-                },
-                "required": ["tareas"],
-            },
-        },
-    }
-]
 
 
 class BaseAgent:
     def __init__(self, system_prompt: str):
         self.system_prompt = system_prompt
         self.historial = [{"role": "system", "content": system_prompt}]
-        self.lista_tareas = []
-        self.continuar_iteracion = True
-        self.aprueba = False
 
-    def preguntar(self, mensaje: str, usar_tools: bool = True) -> str | None:
+    def preguntar(self, mensaje: str) -> str | None:
         self.historial.append({"role": "user", "content": mensaje})
-
         try:
             response = _client.chat.completions.create(
                 model=DEEPSEEK_MODEL,
                 messages=self.historial,
-                **({"tools": _tools, "tool_choice": "auto"} if usar_tools else {}),
             )
+            texto = response.choices[0].message.content.strip()
+            self.historial.append({"role": "assistant", "content": texto})
+            return texto
         except Exception as e:
             print(f"[ERROR DeepSeek] {e}")
             return None
-
-        choice = response.choices[0]
-
-        if choice.finish_reason == "tool_calls":
-            tool_call = choice.message.tool_calls[0]
-            self.historial.append({
-                "role": "assistant",
-                "content": None,
-                "tool_calls": [
-                    {
-                        "id": tool_call.id,
-                        "type": "function",
-                        "function": {
-                            "name": tool_call.function.name,
-                            "arguments": tool_call.function.arguments,
-                        },
-                    }
-                ],
-            })
-
-            args = json.loads(tool_call.function.arguments)
-            print(f"[TOOL CALL] {tool_call.function.name} {args}")
-
-            output = ejecutar_en_docker(
-                f"{args['tool']} {args.get('options', '')} {args['target']}".strip()
-            )
-            print(f"[DOCKER OUTPUT]\n{output}")
-
-            self.historial.append({
-                "role": "tool",
-                "tool_call_id": tool_call.id,
-                "content": output,
-            })
-            return output
-
-        else:
-            texto = choice.message.content.strip()
-            self.historial.append({"role": "assistant", "content": texto})
-            return texto
-
-    def evaluar_reporte(self, reporte: str) -> None:
-        try:
-            response = _client.chat.completions.create(
-                model=DEEPSEEK_MODEL,
-                messages=self.historial + [{"role": "user", "content": reporte}],
-                tools=_tool_aprobar,
-                tool_choice="auto",
-            )
-            choice = response.choices[0]
-            if choice.finish_reason == "tool_calls":
-                tool_call = choice.message.tool_calls[0]
-                args = json.loads(tool_call.function.arguments)
-                self.aprueba = True
-                print(f"\n[JUEZ] APROBADO — {args.get('razon', '')}")
-            else:
-                feedback = choice.message.content.strip()
-                print(f"\n[JUEZ] RECHAZADO — Se requiere otra iteración.")
-                print(f"[JUEZ] Feedback: {feedback}")
-        except Exception as e:
-            print(f"[ERROR evaluar_reporte] {e}")
-
-    def decidir_iteracion(self, mensaje: str) -> None:
-        try:
-            response = _client.chat.completions.create(
-                model=DEEPSEEK_MODEL,
-                messages=self.historial + [{"role": "user", "content": mensaje}],
-                tools=_tool_decidir,
-                tool_choice="auto",
-            )
-            choice = response.choices[0]
-            if choice.finish_reason == "tool_calls":
-                tool_call = choice.message.tool_calls[0]
-                args = json.loads(tool_call.function.arguments)
-                self.continuar_iteracion = False
-                print(f"\n[DECISION] La IA eligió TERMINAR iteraciones.")
-                print(f"[RAZON] {args.get('razon', '')}")
-            else:
-                print(f"\n[DECISION] La IA eligió CONTINUAR iterando.")
-                print(f"[RAZON] {choice.message.content.strip()}")
-        except Exception as e:
-            print(f"[ERROR decidir_iteracion] {e}")
-
-    def generar_tareas(self, mensaje: str) -> list:
-        try:
-            response = _client.chat.completions.create(
-                model=DEEPSEEK_MODEL,
-                messages=self.historial + [{"role": "user", "content": mensaje}],
-                tools=_tool_planificar,
-                tool_choice={"type": "function", "function": {"name": "planificar_tareas"}},
-            )
-            tool_call = response.choices[0].message.tool_calls[0]
-            args = json.loads(tool_call.function.arguments)
-            self.lista_tareas = args["tareas"]
-            print(f"[TAREAS GENERADAS] {self.lista_tareas}")
-            return self.lista_tareas
-        except Exception as e:
-            print(f"[ERROR generar_tareas] {e}")
-            return []

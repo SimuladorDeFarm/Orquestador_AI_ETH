@@ -1,6 +1,6 @@
-from agents.base_agent import BaseAgent
+from agents.judge_agent import JudgeAgent
 
-juez = BaseAgent(
+juez = JudgeAgent(
     "Eres el agente Juez dentro de un Multi-Agent System de pentesting. "
     "Tu única responsabilidad es evaluar el reporte del agente Explorador y decidir si la exploración fue suficiente. "
 
