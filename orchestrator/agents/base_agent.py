@@ -21,7 +21,24 @@ _tools = [
                 "required": ["tool", "target"],
             },
         },
-    }
+    },
+]
+
+_tool_decidir = [
+    {
+        "type": "function",
+        "function": {
+            "name": "finalizar_iteracion",
+            "description": "Indica que la exploración está completa y no se necesitan más iteraciones.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "razon": {"type": "string", "description": "Motivo por el que considera que la exploración está completa"},
+                },
+                "required": ["razon"],
+            },
+        },
+    },
 ]
 
 _tool_planificar = [
@@ -51,6 +68,7 @@ class BaseAgent:
         self.system_prompt = system_prompt
         self.historial = [{"role": "system", "content": system_prompt}]
         self.lista_tareas = []
+        self.continuar_iteracion = True
 
     def preguntar(self, mensaje: str, usar_tools: bool = True) -> str | None:
         self.historial.append({"role": "user", "content": mensaje})
@@ -85,7 +103,8 @@ class BaseAgent:
             })
 
             args = json.loads(tool_call.function.arguments)
-            print(f"[TOOL CALL] {args}")
+            print(f"[TOOL CALL] {tool_call.function.name} {args}")
+
             output = ejecutar_en_docker(
                 f"{args['tool']} {args.get('options', '')} {args['target']}".strip()
             )
@@ -102,6 +121,27 @@ class BaseAgent:
             texto = choice.message.content.strip()
             self.historial.append({"role": "assistant", "content": texto})
             return texto
+
+    def decidir_iteracion(self, mensaje: str) -> None:
+        try:
+            response = _client.chat.completions.create(
+                model=DEEPSEEK_MODEL,
+                messages=self.historial + [{"role": "user", "content": mensaje}],
+                tools=_tool_decidir,
+                tool_choice="auto",
+            )
+            choice = response.choices[0]
+            if choice.finish_reason == "tool_calls":
+                tool_call = choice.message.tool_calls[0]
+                args = json.loads(tool_call.function.arguments)
+                self.continuar_iteracion = False
+                print(f"\n[DECISION] La IA eligió TERMINAR iteraciones.")
+                print(f"[RAZON] {args.get('razon', '')}")
+            else:
+                print(f"\n[DECISION] La IA eligió CONTINUAR iterando.")
+                print(f"[RAZON] {choice.message.content.strip()}")
+        except Exception as e:
+            print(f"[ERROR decidir_iteracion] {e}")
 
     def generar_tareas(self, mensaje: str) -> list:
         try:
