@@ -1,0 +1,1 @@
+Revisa si hay un puerto abierto, si no hay ninguno tambien es una tarea válida.

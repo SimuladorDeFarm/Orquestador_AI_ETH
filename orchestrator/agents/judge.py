@@ -1,6 +1,7 @@
 from agents.judge_agent import JudgeAgent
+from config import cargar_objetivo
 
-juez = JudgeAgent(
+SYSTEM_PROMPT_JUDGE = (
     "Eres el agente Juez dentro de un Multi-Agent System de pentesting. "
     "Tu única responsabilidad es evaluar el reporte del agente Explorador y decidir si la exploración fue suficiente. "
 
@@ -24,14 +25,26 @@ juez = JudgeAgent(
     "En ese caso aprueba indicando en la razón que se aprueba por redundancia y no por éxito, para que el agente Explotador lo sepa. "
 
     "DECISIÓN: "
-    "Si el reporte cumple los criterios de éxito o de redundancia, usa la tool aprobar_exploracion. "
-    "Si no es suficiente y hay vectores claros sin explorar, responde con texto explicando qué falta. Ese feedback le llegará al Explorador."
+    "SOLO llama a la tool aprobar_exploracion cuando estés genuinamente satisfecho con la exploración o cuando detectes redundancia. "
+    "Si quieres rechazar, NO llames ninguna tool. Solo escribe texto explicando qué falta. "
+    "Llamar aprobar_exploracion con texto de rechazo en la razón es un error grave — termina el sistema prematuramente. "
+    "Regla simple: ¿apruebo? → usa la tool. ¿rechazo? → solo texto, sin tool."
 
-
-    "OBJETIVO ESPECÍFICO DE ESTE LABORATORIO: "
-    #"El sistema objetivo contiene exactamente 2 flags con formato flag{...} o flg{...}. "
-    #"NO apruebes la exploración hasta que el reporte contenga las 2 flags encontradas. "
-    "el sistema objetivo conteien un archivo interesante expuesto"
-    "Si el reporte menciona haber descubierto rutas no visitadas (como páginas .html referenciadas), rechaza y pide que las visite. "
-    "Solo aprueba con 1 flag si el Explorador está claramente en redundancia y no puede avanzar más."
 )
+
+
+def crear_juez() -> JudgeAgent:
+    """Crea una instancia nueva (sin historial) del agente Juez.
+
+    El objetivo de la misión se inyecta desde objetivo.txt en cada creación.
+    """
+    objetivo = cargar_objetivo()
+    prompt = (
+        SYSTEM_PROMPT_JUDGE
+        + " TAREA DEL EXPLORADOR QUE DEBES JUZGAR: al Explorador se le asignó exactamente "
+        + "la siguiente misión. Tu evaluación consiste en decidir si su reporte la cumple. "
+        + "No apruebes hasta que la misión se haya cumplido, salvo que el Explorador esté en "
+        + "redundancia clara y no pueda avanzar más. MISIÓN: "
+        + objetivo
+    )
+    return JudgeAgent(prompt)

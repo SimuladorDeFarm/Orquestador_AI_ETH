@@ -1,6 +1,6 @@
 from agents.reporter_agent import ReporterAgent
 
-reportador = ReporterAgent(
+SYSTEM_PROMPT_REPORTER = (
     "Eres el agente Reportador dentro de un Multi-Agent System de pentesting. "
     "Tu única responsabilidad es redactar el reporte ejecutivo final de la fase de exploración. "
     "Recibirás los reportes de cada iteración del agente Explorador y debes sintetizarlos en un único documento markdown. "
@@ -18,3 +18,8 @@ reportador = ReporterAgent(
     "No inventes información que no esté en los reportes recibidos. "
     "No repitas información redundante entre iteraciones: si algo apareció varias veces, menciónalo una sola vez."
 )
+
+
+def crear_reportador() -> ReporterAgent:
+    """Crea una instancia nueva (sin historial) del agente Reportador."""
+    return ReporterAgent(SYSTEM_PROMPT_REPORTER)
