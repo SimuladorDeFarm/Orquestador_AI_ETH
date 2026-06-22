@@ -10,13 +10,8 @@ multi-campaña con identificadores se implementará más adelante.
 import enum
 import threading
 
-from agents.explorer import crear_explorador, explorador, decidir_iteracion
-from agents.judge import crear_juez
-from agents.reporter import crear_reportador
+from agents.commander import dirigir_campaña
 from config import SESION_ID
-
-# Límite de iteraciones del orquestador (idéntico al flujo original).
-MAX_ITERACIONES = 6
 
 
 class EstadoCampaña(str, enum.Enum):
@@ -33,40 +28,13 @@ class CampañaDetenida(Exception):
 
 
 def run_campaign(target: str, sesion_id: int = SESION_ID, control: "CampaignManager | None" = None) -> str:
-    """Ejecuta el flujo completo de exploración para un objetivo.
+    """Ejecuta el flujo completo de la campaña para un objetivo.
 
-    `control`, si se entrega, se consulta en checkpoints para permitir pausar
-    o detener la ejecución de forma cooperativa. Devuelve la ruta del reporte
-    ejecutivo final.
+    Delega la orquestación en el Commander (`dirigir_campaña`), que decide qué
+    fases/agentes actúan. `control`, si se entrega, se propaga para permitir
+    pausar o detener de forma cooperativa. Devuelve la ruta del reporte final.
     """
-    agente = crear_explorador(sesion_id=sesion_id, objetivo_target=target)
-    juez = crear_juez()
-    reportador = crear_reportador()
-
-    reportes = []
-    i = 0
-    while not juez.aprueba and i < MAX_ITERACIONES:
-        if control is not None:
-            control.checkpoint()
-            control.set_iteracion(i + 1)
-
-        reporte = explorador(agente, target, primera_iteracion=(i == 0), control=control)
-        reportes.append(reporte)
-        i += 1
-
-        decidir_iteracion(agente)
-
-        print("\n" + "=" * 50)
-        print("  JUEZ — EVALUACIÓN DEL REPORTE")
-        print("=" * 50)
-        juez.evaluar_reporte(reporte)
-
-    print("\n" + "=" * 50)
-    print("  REPORTE EJECUTIVO FINAL")
-    print("=" * 50)
-    ruta = reportador.generar_reporte(reportes)
-    print(f"Reporte guardado en: {ruta}")
-    return ruta
+    return dirigir_campaña(target, sesion_id=sesion_id, control=control)
 
 
 class CampaignManager:
