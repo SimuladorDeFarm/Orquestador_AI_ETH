@@ -14,16 +14,18 @@ from typing import Callable
 
 from agents.base_agent import BaseAgent, _client
 from config import DEEPSEEK_MODEL
+from metricas.collector import coleccion_activa
 
 
 @dataclass
 class Fase:
     """Una fase de la campaña que el Commander puede asignar.
 
-    `ejecutar(target, sesion_id, control) -> list[str]` corre el flujo completo
-    del agente responsable de la fase y devuelve los reportes que produjo. Esta
-    indirección es la que permite enchufar nuevos agentes (Explotador) sin tocar
-    al Commander: basta registrar otra `Fase`.
+    `ejecutar(target, sesion_id, control, contexto) -> list[str]` corre el flujo
+    completo del agente responsable de la fase y devuelve los reportes que produjo.
+    `contexto` es un dict compartido entre fases (p. ej. la exploración deja ahí su
+    KB y la explotación la lee). Esta indirección permite enchufar nuevos agentes
+    sin tocar al Commander: basta registrar otra `Fase`.
     """
 
     nombre: str
@@ -93,7 +95,10 @@ class CommanderAgent(BaseAgent):
         inválida, asigna la primera fase disponible en vez de quedarse sin actuar.
         """
         nombres = [f.nombre for f in fases_disponibles]
+        col = coleccion_activa()
         if not nombres:
+            if col is not None:
+                col.registrar_decision_commander(None, "no quedan fases disponibles")
             return None
 
         catalogo_fases = "\n".join(f"- {f.nombre}: {f.descripcion}" for f in fases_disponibles)
@@ -125,20 +130,31 @@ class CommanderAgent(BaseAgent):
             if choice.finish_reason == "tool_calls":
                 tool_call = choice.message.tool_calls[0]
                 args = json.loads(tool_call.function.arguments)
+                razon = args.get("razon", "")
                 if tool_call.function.name == "finalizar_campana":
-                    print(f"\n[COMMANDER] Finaliza la campaña — {args.get('razon', '')}")
+                    print(f"\n[COMMANDER] Finaliza la campaña — {razon}")
+                    if col is not None:
+                        col.registrar_decision_commander(None, razon)
                     return None
                 fase = args.get("fase")
                 if fase in nombres:
-                    print(f"\n[COMMANDER] Asigna fase '{fase}' — {args.get('razon', '')}")
+                    print(f"\n[COMMANDER] Asigna fase '{fase}' — {razon}")
+                    if col is not None:
+                        col.registrar_decision_commander(fase, razon)
                     return fase
                 print(f"[COMMANDER] Fase '{fase}' inválida → fallback: {nombres[0]}")
+                if col is not None:
+                    col.registrar_decision_commander(nombres[0], f"fallback (fase '{fase}' inválida)")
                 return nombres[0]
 
             # Respondió texto sin usar tool: no deja la campaña sin avanzar.
             print(f"[COMMANDER] Sin decisión explícita → fallback: {nombres[0]}")
+            if col is not None:
+                col.registrar_decision_commander(nombres[0], "fallback (sin decisión explícita)")
             return nombres[0]
         except Exception as e:  # noqa: BLE001 - el fallback mantiene viva la campaña
             print(f"[ERROR decidir_fase] {e}")
             print(f"[COMMANDER] fallback por error → {nombres[0]}")
+            if col is not None:
+                col.registrar_decision_commander(nombres[0], f"fallback por error: {e}")
             return nombres[0]

@@ -4,8 +4,6 @@ from agents.selector import crear_selector
 from core.runner_client import (
     listar_herramientas,
     formatear_catalogo,
-    ejecutar,
-    formatear_resultado,
 )
 from config import cargar_objetivo, SESION_ID
 
@@ -126,25 +124,7 @@ def explorador(agente: ExplorerAgent, target: str, primera_iteracion: bool = Tru
     print("\n" + "=" * 50)
     print("  FASE 2 — EJECUCIÓN DE TAREAS")
     print("=" * 50)
-    i = 0
-    while agente.lista_tareas:
-        if control is not None:
-            control.checkpoint()
-        tarea_actual = agente.lista_tareas[0]
-        print(f"\n[TAREA {i + 1}] {tarea_actual}")
-        herramienta = tarea_actual.get("herramienta")
-        if not herramienta:
-            print(f"[SKIP] Tarea sin herramienta: {tarea_actual}")
-        else:
-            params = tarea_actual.get("params", {})
-            tarea_res = ejecutar(herramienta, params, agente.sesion_id)
-            output = formatear_resultado(tarea_res)
-            print(output)
-            # El crudo se guarda aparte y la memoria se actualiza vía Summarizer;
-            # no se acumula en el contexto del Explorador.
-            agente.ingerir(herramienta, params, output)
-        agente.lista_tareas.pop(0)
-        i += 1
+    agente.ejecutar_tareas(control)
 
     print("\n" + "=" * 50)
     print("  FASE 3 — REPORTE")

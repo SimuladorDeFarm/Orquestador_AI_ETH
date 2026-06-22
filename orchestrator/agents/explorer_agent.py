@@ -124,6 +124,33 @@ class ExplorerAgent(IterableAgent):
             if col is not None:
                 col.registrar_ingesta(crudo_acumulado, len(memoria_txt))
 
+    def ejecutar_tareas(self, control=None) -> None:
+        """Ejecuta en orden las tareas de `self.lista_tareas` vía el runner.
+
+        Cada resultado se ingiere en la memoria (KB). Lógica compartida por el
+        Explorador y el Explotador: ambos planifican tareas y las ejecutan igual.
+        `control`, si se entrega, permite pausar/detener en cada tarea.
+        """
+        i = 0
+        while self.lista_tareas:
+            if control is not None:
+                control.checkpoint()
+            tarea_actual = self.lista_tareas[0]
+            print(f"\n[TAREA {i + 1}] {tarea_actual}")
+            herramienta = tarea_actual.get("herramienta")
+            if not herramienta:
+                print(f"[SKIP] Tarea sin herramienta: {tarea_actual}")
+            else:
+                params = tarea_actual.get("params", {})
+                tarea_res = ejecutar(herramienta, params, self.sesion_id)
+                output = formatear_resultado(tarea_res)
+                print(output)
+                # El crudo se guarda aparte y la memoria se actualiza vía Summarizer;
+                # no se acumula en el contexto del agente.
+                self.ingerir(herramienta, params, output)
+            self.lista_tareas.pop(0)
+            i += 1
+
     # --- llamadas al LLM (basadas en memoria, no en historial) ---
 
     def preguntar(self, mensaje: str, usar_tools: bool = True) -> str | None:

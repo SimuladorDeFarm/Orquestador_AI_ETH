@@ -113,17 +113,26 @@ def _grafico_tokens_agente(col: MetricsCollector, carpeta: str) -> str | None:
     return _guardar(fig, carpeta, "tokens_por_agente.png")
 
 
+def _etiqueta_iter(it: dict, n: int) -> str:
+    """Etiqueta corta por iteración: «Expl 1», «Explo 2»... según la fase."""
+    fase = (it.get("fase") or "")[:5].capitalize()
+    return f"{fase} {it.get('n_local', n)}" if fase else str(it.get("n_local", n))
+
+
 def _grafico_tareas_iteracion(col: MetricsCollector, carpeta: str) -> str | None:
     its = sorted(n for n in col.iteraciones if col.iteraciones[n].get("tareas_generadas"))
     if not its:
         return None
+    etiquetas = [_etiqueta_iter(col.iteraciones[n], n) for n in its]
     valores = [col.iteraciones[n]["tareas_generadas"] for n in its]
+    colores = [_NARANJA if col.iteraciones[n].get("fase") == "explotacion" else _AZUL for n in its]
     fig, ax = plt.subplots(figsize=(7, 4))
-    ax.bar([str(n) for n in its], valores, color=_AZUL)
+    ax.bar(etiquetas, valores, color=colores)
     ax.set_title("Tareas generadas por iteración")
-    ax.set_xlabel("Iteración")
+    ax.set_xlabel("Iteración (por fase)")
     ax.set_ylabel("N.º de tareas")
     ax.grid(True, axis="y", alpha=0.3)
+    plt.setp(ax.get_xticklabels(), rotation=20, ha="right")
     return _guardar(fig, carpeta, "tareas_por_iteracion.png")
 
 
@@ -233,6 +242,21 @@ def _construir_md(col: MetricsCollector, g: dict) -> str:
             L.append(f"| {a} | {d['llamadas']} | {d['prompt']:,} | {d['completion']:,} | {d['prompt']+d['completion']:,} |")
         L.append("")
 
+    L.append("## Coordinación del Commander\n")
+    if col.decisiones_commander:
+        L.append("Decisiones de orquestación (qué fase asignó en cada paso):\n")
+        L.append("| # | Decisión | Razón |")
+        L.append("|---|---|---|")
+        for idx, d in enumerate(col.decisiones_commander, 1):
+            destino = f"asignar `{d['fase']}`" if d.get("fase") else "**finalizar campaña**"
+            razon = (d.get("razon") or "").replace("\n", " ")
+            L.append(f"| {idx} | {destino} | {razon} |")
+        L.append("")
+        n_explot = sum(1 for d in col.decisiones_commander if d.get("fase") == "explotacion")
+        L.append(f"> El Commander {'**sí** asignó' if n_explot else '**no** asignó'} la fase de explotación.\n")
+    else:
+        L.append("_Sin decisiones de orquestación registradas._\n")
+
     L.append("## Eficiencia del Summarizer (memoria estructurada)\n")
     L.append(_img(g.get("summarizer"), "Ahorro de contexto del Summarizer"))
     if col.ingestas:
@@ -247,11 +271,11 @@ def _construir_md(col: MetricsCollector, g: dict) -> str:
     L.append("## Iteraciones y decisiones (IA ↔ Juez)\n")
     L.append(_img(g.get("tareas"), "Tareas por iteración"))
     if col.iteraciones:
-        L.append("| Iteración | Tareas | Decisión IA | Decisión Juez |")
-        L.append("|---|---|---|---|")
+        L.append("| Fase | Iteración | Tareas | Decisión IA | Decisión Juez |")
+        L.append("|---|---|---|---|---|")
         for n in sorted(col.iteraciones):
             it = col.iteraciones[n]
-            L.append(f"| {n} | {it.get('tareas_generadas', 0)} | "
+            L.append(f"| {it.get('fase', '—')} | {it.get('n_local', n)} | {it.get('tareas_generadas', 0)} | "
                      f"{it.get('decision_ia') or '—'} | {it.get('decision_juez') or '—'} |")
         L.append("")
     L.append("**Acuerdo IA ↔ Juez** (cuándo coinciden y cuándo no):\n")

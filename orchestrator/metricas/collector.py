@@ -13,6 +13,7 @@ Diseño:
 Todo es best-effort: si algo falla al medir, no debe romper la campaña.
 """
 
+import re
 import time
 from dataclasses import dataclass, field
 
@@ -21,19 +22,21 @@ from dataclasses import dataclass, field
 USD_POR_1M_INPUT = 0.27
 USD_POR_1M_OUTPUT = 1.10
 
-# Mapa para clasificar una llamada LLM según una palabra clave del system prompt.
-_CLAVES_AGENTE = ["Explorador", "Juez", "Reportador", "Selector", "Comandante", "Summarizer"]
+# Todos los system prompts arrancan con "Eres el agente <Nombre>". Clasificamos por
+# esa declaración de rol y NO por palabras sueltas: los prompts se mencionan entre sí
+# (casi todos nombran al "Explorador"), así que buscar palabras clave los confundiría.
+_PATRON_AGENTE = re.compile(r"Eres el agente (\w+)")
 
 
 def _clasificar_agente(messages) -> str:
-    """Infiere qué agente hizo la llamada a partir del system prompt."""
+    """Infiere qué agente hizo la llamada a partir de su declaración de rol."""
     try:
         for m in messages or []:
             if m.get("role") == "system":
                 texto = m.get("content", "") or ""
-                for clave in _CLAVES_AGENTE:
-                    if clave in texto:
-                        return clave
+                match = _PATRON_AGENTE.search(texto)
+                if match:
+                    return match.group(1)
                 break
     except Exception:
         pass
@@ -54,6 +57,7 @@ class MetricsCollector:
     tareas_runner: list = field(default_factory=list)  # {herramienta, estado, codigo_salida, latencia, iteracion}
     ingestas: list = field(default_factory=list)       # {comando, crudo_acumulado, memoria_len}
     errores: list = field(default_factory=list)        # {origen, detalle}
+    decisiones_commander: list = field(default_factory=list)  # {fase, razon} (fase=None => finalizar)
 
     # Por iteración: {n: {tareas_generadas, decision_ia, razon_ia, decision_juez, razon_juez}}
     iteraciones: dict = field(default_factory=dict)
@@ -61,6 +65,7 @@ class MetricsCollector:
     # Estado de la campaña.
     fase_actual: str = "setup"
     iter_actual: int = 0
+    iter_global: int = 0  # contador monotónico: no colisiona entre fases
     motivo_termino: str = ""
     exito: bool | None = None
     memoria_final: dict = field(default_factory=dict)
@@ -72,12 +77,18 @@ class MetricsCollector:
         self.fase_actual = nombre
 
     def iniciar_iteracion(self, n: int) -> None:
-        self.iter_actual = n
-        self.iteraciones.setdefault(n, {
+        """Abre una iteración nueva. `n` es el número local dentro de la fase;
+        internamente se usa un id global para que exploración y explotación no
+        compartan entradas en `iteraciones`."""
+        self.iter_global += 1
+        self.iter_actual = self.iter_global
+        self.iteraciones[self.iter_actual] = {
+            "fase": self.fase_actual,
+            "n_local": n,
             "tareas_generadas": 0,
             "decision_ia": None, "razon_ia": "",
             "decision_juez": None, "razon_juez": "",
-        })
+        }
 
     # --- registro de eventos ---
 
@@ -123,6 +134,10 @@ class MetricsCollector:
 
     def registrar_error(self, origen: str, detalle: str) -> None:
         self.errores.append({"origen": origen, "detalle": detalle})
+
+    def registrar_decision_commander(self, fase: str | None, razon: str = "") -> None:
+        """Registra qué fase asignó el Commander (o None si decidió finalizar)."""
+        self.decisiones_commander.append({"fase": fase, "razon": razon or ""})
 
     # --- resultado final ---
 

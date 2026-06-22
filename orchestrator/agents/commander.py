@@ -11,6 +11,7 @@ CommanderAgent no necesita cambios.
 
 from agents.commander_agent import CommanderAgent, Fase
 from agents.explorer import crear_explorador, explorador, decidir_iteracion
+from agents.exploiter import fase_explotacion
 from agents.judge import crear_juez
 from agents.reporter import crear_reportador
 from config import cargar_objetivo, SESION_ID
@@ -42,7 +43,15 @@ SYSTEM_PROMPT_COMMANDER = (
     "En cada paso recibirás el scope, las fases disponibles, las ya completadas y los reportes "
     "acumulados. Elige la siguiente fase pertinente con la tool asignar_fase. "
     "Si la misión ya está cumplida o ninguna fase disponible aporta valor, usa finalizar_campana. "
-    "Asigna SOLO fases que aparezcan como disponibles; no inventes fases ni agentes."
+    "Asigna SOLO fases que aparezcan como disponibles; no inventes fases ni agentes. "
+
+    "CUÁNDO NO EXPLOTAR: "
+    "La explotación NO es obligatoria. Antes de asignarla, revisa los reportes de exploración y "
+    "evalúa si existe algún vector REALMENTE explotable (servicio vulnerable, ruta o archivo "
+    "sensible, credenciales, mala configuración, lógica abusable). "
+    "Si la exploración no encontró ningún vector aprovechable, NO asignes la explotación: "
+    "usa finalizar_campana indicando que no hay superficie explotable. Explotar sin vector solo "
+    "gasta recursos."
 )
 
 
@@ -55,11 +64,12 @@ def crear_comandante() -> CommanderAgent:
 
 # --- Fases concretas --------------------------------------------------------
 
-def _fase_exploracion(target: str, sesion_id: int = SESION_ID, control=None) -> list[str]:
+def _fase_exploracion(target: str, sesion_id: int = SESION_ID, control=None, contexto: dict | None = None) -> list[str]:
     """Fase de reconocimiento: el Explorador itera bajo evaluación del Juez.
 
     Devuelve la lista de reportes de iteración para que el Commander se los
-    entregue al Reportador final.
+    entregue al Reportador final, y deja la KB de exploración en `contexto` para
+    que la pueda aprovechar la fase de explotación.
     """
     print("\n" + "#" * 60)
     print("  FASE: EXPLORACIÓN (RECONOCIMIENTO)")
@@ -92,6 +102,10 @@ def _fase_exploracion(target: str, sesion_id: int = SESION_ID, control=None) -> 
         print("=" * 50)
         juez.evaluar_reporte(reporte)
 
+    # Deja los hallazgos a disposición de la fase de explotación.
+    if contexto is not None:
+        contexto["memoria_exploracion"] = agente.memoria
+
     # Cierre de la fase: registra cobertura y motivo de término para las métricas.
     if col is not None:
         col.set_memoria_final(agente.memoria)
@@ -113,16 +127,10 @@ def _fase_exploracion(target: str, sesion_id: int = SESION_ID, control=None) -> 
 def construir_fases() -> dict[str, Fase]:
     """Registro de fases disponibles para el Commander.
 
-    PUNTO DE EXTENSIÓN: para integrar el Explotador, añade aquí su fase, p. ej.:
-
-        from agents.exploiter import fase_explotacion
-        "explotacion": Fase(
-            nombre="explotacion",
-            descripcion="Explota los vectores hallados por el Explorador.",
-            ejecutar=fase_explotacion,
-        ),
-
-    El CommanderAgent la considerará automáticamente; no requiere más cambios.
+    Cada fase es una `Fase` con un callable `ejecutar(target, sesion_id, control, contexto)`.
+    El `contexto` es un dict compartido entre fases (p. ej., la exploración deja
+    ahí su KB y la explotación la lee). Añadir una fase nueva es registrarla aquí;
+    el CommanderAgent la considerará automáticamente.
     """
     return {
         "exploracion": Fase(
@@ -132,6 +140,15 @@ def construir_fases() -> dict[str, Fase]:
                 "expuestos. Produce los hallazgos que habilitan la explotación."
             ),
             ejecutar=_fase_exploracion,
+        ),
+        "explotacion": Fase(
+            nombre="explotacion",
+            descripcion=(
+                "Explota los vectores hallados en la exploración (servicios vulnerables, rutas "
+                "o archivos sensibles, credenciales, malas configuraciones) para comprometer el "
+                "objetivo o capturar flags. Solo tiene sentido si la exploración halló vectores."
+            ),
+            ejecutar=fase_explotacion,
         ),
     }
 
@@ -158,6 +175,7 @@ def dirigir_campaña(target: str, sesion_id: int = SESION_ID, control=None) -> s
     fases = construir_fases()
     completadas: list[str] = []
     reportes: list[str] = []
+    contexto: dict = {}  # estado compartido entre fases (p. ej. la KB de exploración)
 
     try:
         while True:
@@ -171,7 +189,7 @@ def dirigir_campaña(target: str, sesion_id: int = SESION_ID, control=None) -> s
                 break
 
             fase = fases[nombre]
-            nuevos = fase.ejecutar(target, sesion_id, control)
+            nuevos = fase.ejecutar(target, sesion_id, control, contexto)
             reportes.extend(nuevos)
             completadas.append(nombre)
             # El Commander recibe el reporte de la fase antes de decidir la siguiente.
