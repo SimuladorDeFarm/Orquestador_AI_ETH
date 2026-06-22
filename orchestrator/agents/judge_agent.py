@@ -1,6 +1,7 @@
 import json
 from agents.base_agent import BaseAgent, _client
 from config import DEEPSEEK_MODEL
+from metricas.collector import coleccion_activa
 
 _tool_aprobar = [
     {
@@ -34,14 +35,20 @@ class JudgeAgent(BaseAgent):
                 tool_choice="auto",
             )
             choice = response.choices[0]
+            col = coleccion_activa()
             if choice.finish_reason == "tool_calls":
                 tool_call = choice.message.tool_calls[0]
                 args = json.loads(tool_call.function.arguments)
                 self.aprueba = True
-                print(f"\n[JUEZ] APROBADO — {args.get('razon', '')}")
+                razon = args.get("razon", "")
+                print(f"\n[JUEZ] APROBADO — {razon}")
+                if col is not None:
+                    col.registrar_decision_juez(aprueba=True, razon=razon)
             else:
                 feedback = choice.message.content.strip()
                 print(f"\n[JUEZ] RECHAZADO — Se requiere otra iteración.")
                 print(f"[JUEZ] Feedback: {feedback}")
+                if col is not None:
+                    col.registrar_decision_juez(aprueba=False, razon=feedback)
         except Exception as e:
             print(f"[ERROR evaluar_reporte] {e}")

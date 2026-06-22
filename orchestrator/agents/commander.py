@@ -14,6 +14,8 @@ from agents.explorer import crear_explorador, explorador, decidir_iteracion
 from agents.judge import crear_juez
 from agents.reporter import crear_reportador
 from config import cargar_objetivo, SESION_ID
+from metricas import iniciar_coleccion, finalizar_coleccion, coleccion_activa
+from metricas.reporte import generar_reporte_metricas
 
 # Tope de iteraciones del bucle Explorador↔Juez dentro de la fase de exploración.
 MAX_ITERACIONES_EXPLORACION = 6
@@ -63,6 +65,10 @@ def _fase_exploracion(target: str, sesion_id: int = SESION_ID, control=None) -> 
     print("  FASE: EXPLORACIÓN (RECONOCIMIENTO)")
     print("#" * 60)
 
+    col = coleccion_activa()
+    if col is not None:
+        col.set_fase("exploracion")
+
     agente = crear_explorador(sesion_id=sesion_id, objetivo_target=target)
     juez = crear_juez()
 
@@ -72,6 +78,8 @@ def _fase_exploracion(target: str, sesion_id: int = SESION_ID, control=None) -> 
         if control is not None:
             control.checkpoint()
             control.set_iteracion(i + 1)
+        if col is not None:
+            col.iniciar_iteracion(i + 1)
 
         reporte = explorador(agente, target, primera_iteracion=(i == 0), control=control)
         reportes.append(reporte)
@@ -83,6 +91,21 @@ def _fase_exploracion(target: str, sesion_id: int = SESION_ID, control=None) -> 
         print("  JUEZ — EVALUACIÓN DEL REPORTE")
         print("=" * 50)
         juez.evaluar_reporte(reporte)
+
+    # Cierre de la fase: registra cobertura y motivo de término para las métricas.
+    if col is not None:
+        col.set_memoria_final(agente.memoria)
+        if juez.aprueba:
+            redundancia = "redundan" in (col.ultima_razon_juez or "").lower()
+            motivo = "juez_aprobo_redundancia" if redundancia else "juez_aprobo_exito"
+            exito = not redundancia
+        else:
+            motivo = "limite_iteraciones"
+            exito = False
+        # Encontrar una flag se considera éxito aunque el cierre fuera por otra vía.
+        if agente.memoria.get("flags"):
+            exito = True
+        col.set_resultado(motivo, exito)
 
     return reportes
 
@@ -121,9 +144,12 @@ def dirigir_campaña(target: str, sesion_id: int = SESION_ID, control=None) -> s
     `control`, si se entrega, se propaga a las fases para permitir pausar/detener
     de forma cooperativa. Devuelve la ruta del reporte ejecutivo final.
     """
+    mision = cargar_objetivo()
+    iniciar_coleccion(target, mision)
+
     comandante = crear_comandante()
     reportador = crear_reportador()
-    scope = {"target": target, "mision": cargar_objetivo()}
+    scope = {"target": target, "mision": mision}
 
     print("\n" + "#" * 60)
     print(f"  COMMANDER — INICIO DE CAMPAÑA  (scope: {target})")
@@ -133,26 +159,41 @@ def dirigir_campaña(target: str, sesion_id: int = SESION_ID, control=None) -> s
     completadas: list[str] = []
     reportes: list[str] = []
 
-    while True:
-        pendientes = [f for nombre, f in fases.items() if nombre not in completadas]
-        if not pendientes:
-            print("\n[COMMANDER] No quedan fases pendientes.")
-            break
+    try:
+        while True:
+            pendientes = [f for nombre, f in fases.items() if nombre not in completadas]
+            if not pendientes:
+                print("\n[COMMANDER] No quedan fases pendientes.")
+                break
 
-        nombre = comandante.decidir_fase(scope, pendientes, completadas, reportes)
-        if nombre is None:
-            break
+            nombre = comandante.decidir_fase(scope, pendientes, completadas, reportes)
+            if nombre is None:
+                break
 
-        fase = fases[nombre]
-        nuevos = fase.ejecutar(target, sesion_id, control)
-        reportes.extend(nuevos)
-        completadas.append(nombre)
-        # El Commander recibe el reporte de la fase antes de decidir la siguiente.
-        print(f"\n[COMMANDER] Fase '{nombre}' completada — {len(nuevos)} reporte(s) recibido(s).")
+            fase = fases[nombre]
+            nuevos = fase.ejecutar(target, sesion_id, control)
+            reportes.extend(nuevos)
+            completadas.append(nombre)
+            # El Commander recibe el reporte de la fase antes de decidir la siguiente.
+            print(f"\n[COMMANDER] Fase '{nombre}' completada — {len(nuevos)} reporte(s) recibido(s).")
 
-    print("\n" + "=" * 50)
-    print("  REPORTE EJECUTIVO FINAL")
-    print("=" * 50)
-    ruta = reportador.generar_reporte(reportes)
-    print(f"Reporte guardado en: {ruta}")
-    return ruta
+        print("\n" + "=" * 50)
+        print("  REPORTE EJECUTIVO FINAL")
+        print("=" * 50)
+        ruta = reportador.generar_reporte(reportes)
+        print(f"Reporte guardado en: {ruta}")
+        return ruta
+    except BaseException as e:
+        # Si la campaña se detiene o falla, deja registro del motivo en las métricas.
+        col = coleccion_activa()
+        if col is not None and not col.motivo_termino:
+            col.set_resultado(type(e).__name__, exito=False)
+        raise
+    finally:
+        col = finalizar_coleccion()
+        if col is not None:
+            try:
+                ruta_m = generar_reporte_metricas(col)
+                print(f"\n[METRICAS] Reporte de métricas guardado en: {ruta_m}")
+            except Exception as e:  # noqa: BLE001 - las métricas no deben tumbar la campaña
+                print(f"[METRICAS] No se pudo generar el reporte de métricas: {e}")

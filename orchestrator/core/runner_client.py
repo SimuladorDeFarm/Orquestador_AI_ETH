@@ -50,6 +50,26 @@ def listar_herramientas() -> list[dict]:
 
 
 def ejecutar(herramienta: str, params: dict, sesion_id: int) -> dict:
+    """Ejecuta una herramienta en el runner midiendo latencia y resultado.
+
+    Envuelve `_ejecutar_impl` para registrar la métrica de la tarea (latencia y
+    código de salida) si hay una colección de métricas activa. La medición es
+    best-effort y nunca altera el resultado devuelto.
+    """
+    from metricas.collector import coleccion_activa
+
+    col = coleccion_activa()
+    t0 = time.perf_counter()
+    tarea = _ejecutar_impl(herramienta, params, sesion_id)
+    if col is not None:
+        col.registrar_tarea(
+            herramienta, tarea.get("estado"), tarea.get("codigo_salida"),
+            time.perf_counter() - t0,
+        )
+    return tarea
+
+
+def _ejecutar_impl(herramienta: str, params: dict, sesion_id: int) -> dict:
     """Ejecuta una herramienta en el runner y espera (polling) su resultado.
 
     Devuelve el dict de la tarea terminal (o un dict sintético con estado

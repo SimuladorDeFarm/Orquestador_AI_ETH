@@ -3,6 +3,7 @@ from agents.iterable_agent import IterableAgent, _client, _tool_decidir
 from config import DEEPSEEK_MODEL
 from core.runner_client import ejecutar, formatear_resultado
 from agents.summarizer_agent import memoria_vacia, formatear_memoria
+from metricas.collector import coleccion_activa
 
 
 def _tools_ejecutar(nombres: list[str]) -> list:
@@ -119,6 +120,10 @@ class ExplorerAgent(IterableAgent):
             print("-" * 50)
             print(memoria_txt)
 
+            col = coleccion_activa()
+            if col is not None:
+                col.registrar_ingesta(crudo_acumulado, len(memoria_txt))
+
     # --- llamadas al LLM (basadas en memoria, no en historial) ---
 
     def preguntar(self, mensaje: str, usar_tools: bool = True) -> str | None:
@@ -168,6 +173,9 @@ class ExplorerAgent(IterableAgent):
             args = json.loads(tool_call.function.arguments)
             self.lista_tareas = args["tareas"]
             print(f"[TAREAS GENERADAS] {self.lista_tareas}")
+            col = coleccion_activa()
+            if col is not None:
+                col.registrar_tareas_generadas(len(self.lista_tareas))
             return self.lista_tareas
         except Exception as e:
             print(f"[ERROR generar_tareas] {e}")
@@ -183,14 +191,20 @@ class ExplorerAgent(IterableAgent):
                 tool_choice="auto",
             )
             choice = response.choices[0]
+            col = coleccion_activa()
             if choice.finish_reason == "tool_calls":
                 tool_call = choice.message.tool_calls[0]
                 args = json.loads(tool_call.function.arguments)
                 self.continuar_iteracion = False
                 print("\n[DECISION] La IA eligió TERMINAR iteraciones.")
                 print(f"[RAZON] {args.get('razon', '')}")
+                if col is not None:
+                    col.registrar_decision_ia(continuar=False, razon=args.get("razon", ""))
             else:
+                razon = (choice.message.content or "").strip()
                 print("\n[DECISION] La IA eligió CONTINUAR iterando.")
-                print(f"[RAZON] {(choice.message.content or '').strip()}")
+                print(f"[RAZON] {razon}")
+                if col is not None:
+                    col.registrar_decision_ia(continuar=True, razon=razon)
         except Exception as e:
             print(f"[ERROR decidir_iteracion] {e}")

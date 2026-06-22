@@ -1,1 +1,1 @@
-ESTAS FRENTE A UN LABORATORIO DE TRYHACKME, DEBES HACER UN ESCANEO Y ENCONTRAR SI HAY PUERTOS ABIERTOS, ES TU UNICA TAREA, NO REVISES Q HAY EN LOS PUERTOS, SOLO DIME LOS PUERTOS ABIERTOS Y GENERA EL REPORTE
+Estas en una maquina local, no hay puertos abiertos, tu unica tarea es ejecutar un nmap a los mil puertos mas comunes, si no sale nada abierto no importa.
