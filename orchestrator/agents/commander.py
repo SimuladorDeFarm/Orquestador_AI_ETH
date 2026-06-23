@@ -198,7 +198,7 @@ def dirigir_campaña(target: str, sesion_id: int = SESION_ID, control=None) -> s
         print("\n" + "=" * 50)
         print("  REPORTE EJECUTIVO FINAL")
         print("=" * 50)
-        ruta = reportador.generar_reporte(reportes)
+        ruta = reportador.generar_reporte(reportes, target=target, mision=mision)
         print(f"Reporte guardado en: {ruta}")
         return ruta
     except BaseException as e:
