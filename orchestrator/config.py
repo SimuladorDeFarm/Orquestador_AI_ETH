@@ -18,6 +18,20 @@ RUNNER_EXECUTOR_URL = os.getenv("RUNNER_EXECUTOR_URL", "http://127.0.0.1:8004")
 # Sesión de escaneo del runner. Por ahora una sola sesión fija (configurable).
 SESION_ID = int(os.getenv("SESION_ID", "3"))
 
+# --- CORS ---
+# Orígenes del frontend autorizados a llamar a esta API desde el navegador.
+# Sin esto, el navegador bloquea las respuestas (aunque el servidor responda 200)
+# porque el frontend manda 'Authorization: Bearer <token>' desde otro origen.
+# Lista separada por comas; default: los puertos típicos de Vite en desarrollo.
+CORS_ORIGINS = [
+    o.strip()
+    for o in os.getenv(
+        "CORS_ORIGINS",
+        "http://localhost:5173,http://127.0.0.1:5173",
+    ).split(",")
+    if o.strip()
+]
+
 # Polling de tareas del executor: intervalo y nº máximo de consultas.
 RUNNER_POLL_INTERVALO = 2      # segundos entre consultas
 RUNNER_POLL_MAX = 150          # ~5 min de espera máxima por tarea

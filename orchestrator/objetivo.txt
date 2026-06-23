@@ -1,1 +1,1 @@
-Estas en una maquina local, no hay puertos abiertos, tu unica tarea es ejecutar un nmap a los mil puertos mas comunes, si no sale nada abierto no importa.
+SOLO HAZ ENUMERCIOND E PEURTOS PARA ENCONTRAR PUERTOS ABIERTOS
