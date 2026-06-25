@@ -33,12 +33,13 @@ SYSTEM_PROMPT_JUDGE = (
 )
 
 
-def crear_juez() -> JudgeAgent:
+def crear_juez(mision: str = "") -> JudgeAgent:
     """Crea una instancia nueva (sin historial) del agente Juez.
 
-    El objetivo de la misión se inyecta desde objetivo.txt en cada creación.
+    La `mision` de la campaña se inyecta en el prompt. Si viene vacía, cae al
+    fallback de `objetivo.txt`.
     """
-    objetivo = cargar_objetivo()
+    objetivo = mision or cargar_objetivo()
     prompt = (
         SYSTEM_PROMPT_JUDGE
         + " TAREA DEL EXPLORADOR QUE DEBES JUZGAR: al Explorador se le asignó exactamente "

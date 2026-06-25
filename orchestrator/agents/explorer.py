@@ -60,15 +60,16 @@ SYSTEM_PROMPT_EXPLORER = (
 TARGET = "localhost"
 
 
-def crear_explorador(sesion_id: int = SESION_ID, objetivo_target: str = "") -> ExplorerAgent:
+def crear_explorador(sesion_id: int = SESION_ID, objetivo_target: str = "", mision: str = "") -> ExplorerAgent:
     """Crea una instancia nueva del agente Explorador.
 
-    Inyecta en el prompt el objetivo de la misión (objetivo.txt) y el catálogo
+    Inyecta en el prompt la `mision` construida para la campaña y el catálogo
     real de herramientas del runner, leído en cada creación de campaña. Le
     asigna un Summarizer para mantener su memoria de trabajo estructurada.
     `objetivo_target` es el host/IP bajo análisis (se guarda en la memoria).
+    Si `mision` viene vacía, cae al fallback de `objetivo.txt`.
     """
-    objetivo = cargar_objetivo()
+    objetivo = mision or cargar_objetivo()
     catalogo = listar_herramientas()
     # El Selector elige el pool de herramientas pertinente para el rol de reconocimiento.
     herramientas = crear_selector().seleccionar(catalogo, objetivo, rol="reconocimiento")

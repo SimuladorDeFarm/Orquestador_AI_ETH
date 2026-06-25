@@ -46,20 +46,8 @@ Dani-ETH está diseñado para entornos **autorizados**. Solo debe ejecutarse con
 Antes de iniciar, confirma que tienes:
 - [ ] El runner corriendo (Tool Registry en puerto `8003`, Tool Executor en `8004`).
 - [ ] La API Key de DeepSeek configurada en el entorno (`DEEPSEEK_API_KEY` o variable `Deepseek`).
-- [ ] La misión escrita en `orchestrator/objetivo.txt`.
 
-### Paso 1: Escribir la misión
-
-Edita `orchestrator/objetivo.txt` con el objetivo de la campaña en lenguaje natural. Ejemplo:
-
-```
-Encuentra todos los puertos abiertos y servicios corriendo en el objetivo.
-Si encuentras algún servicio con vulnerabilidad conocida, indícalo.
-```
-
-La misión guía al Explorador y al Juez. Una misión clara = mejores resultados.
-
-### Paso 2: Levantar la API
+### Paso 1: Levantar la API
 
 ```bash
 cd orchestrator
@@ -68,29 +56,74 @@ uvicorn main:app --reload
 
 La documentación interactiva queda disponible en: `http://127.0.0.1:8000/docs`
 
-### Paso 3: Iniciar una campaña
+### Paso 2: Iniciar una campaña
 
-Haz un `POST` a `/campaign/start` con el objetivo:
+Haz un `POST` a `/campaign/start` indicando el objetivo y, opcionalmente, el
+modo y la profundidad. El sistema construye la misión automáticamente a partir
+de esos parámetros.
+
+**Ejemplo mínimo (solo reconocimiento, profundidad estándar):**
 
 ```bash
 curl -X POST http://127.0.0.1:8000/campaign/start \
   -H "Content-Type: application/json" \
-  -d '{"target": "scanme.nmap.org", "sesion_id": 3}'
+  -d '{"target": "scanme.nmap.org"}'
 ```
 
-Respuesta esperada:
+**Ejemplo completo (con todos los parámetros):**
+
+```bash
+curl -X POST http://127.0.0.1:8000/campaign/start \
+  -H "Content-Type: application/json" \
+  -d '{
+    "target": "10.10.10.5",
+    "sesion_id": 3,
+    "modo": "reconocimiento_explotacion",
+    "profundidad": "estandar",
+    "restricciones": {
+      "no_pivoting": true,
+      "modo_ctf": true,
+      "flag_format": "FLAG{...}",
+      "solo_reportar_criticos": false,
+      "stealth": false
+    }
+  }'
+```
+
+**Parámetros principales:**
+
+| Campo | Opciones | Default |
+|---|---|---|
+| `modo` | `solo_reconocimiento` · `reconocimiento_vulnerabilidades` · `reconocimiento_explotacion` | `solo_reconocimiento` |
+| `profundidad` | `superficial` (2 iters) · `estandar` (5 iters) · `exhaustivo` (sin límite) | `estandar` |
+| `restricciones.no_pivoting` | `true` / `false` | `true` |
+| `restricciones.modo_ctf` | `true` / `false` | `false` |
+| `restricciones.stealth` | `true` / `false` (minimiza ruido IDS) | `false` |
+
+**Respuesta esperada:**
 
 ```json
 {
   "estado": "ejecutando",
   "target": "scanme.nmap.org",
+  "sesion_id": 3,
+  "modo": "solo_reconocimiento",
+  "profundidad": "estandar",
+  "restricciones": {
+    "no_pivoting": true,
+    "modo_ctf": false,
+    "flag_format": "FLAG{...}",
+    "solo_reportar_criticos": false,
+    "stealth": false
+  },
   "iteracion_actual": 0,
   "ruta_reporte": null,
-  "error": null
+  "error": null,
+  "advertencias": []
 }
 ```
 
-### Paso 4: Monitorear el estado
+### Paso 3: Monitorear el estado
 
 ```bash
 curl http://127.0.0.1:8000/campaign/status
@@ -107,7 +140,7 @@ Los estados posibles son:
 | `finalizado` | Terminó normalmente, hay reporte disponible |
 | `error` | Ocurrió un error; revisar el campo `error` |
 
-### Paso 5: Controlar la campaña
+### Paso 4: Controlar la campaña
 
 ```bash
 # Pausar (toma efecto al terminar la tarea actual)
@@ -120,7 +153,7 @@ curl -X POST http://127.0.0.1:8000/campaign/resume
 curl -X POST http://127.0.0.1:8000/campaign/stop
 ```
 
-### Paso 6: Leer los resultados
+### Paso 5: Leer los resultados
 
 Cuando el estado llega a `finalizado`, el campo `ruta_reporte` tiene la ruta del archivo markdown con el reporte ejecutivo. También se genera un reporte de métricas en `orchestrator/metrics/<timestamp>/`.
 
@@ -180,15 +213,7 @@ Cada iteración aparece en el reporte de métricas con su decisión.
 
 Este ejemplo muestra una campaña completa contra `scanme.nmap.org` (host público de prueba de Nmap, autorizado para esto).
 
-### 1. Configurar la misión
-
-`orchestrator/objetivo.txt`:
-```
-Encuentra los puertos abiertos y los servicios que corren en el objetivo.
-Identifica versiones de software si es posible.
-```
-
-### 2. Levantar el sistema
+### 1. Levantar el sistema
 
 ```bash
 # Terminal 1: levantar el runner (del equipo de backend)
@@ -199,12 +224,19 @@ cd orchestrator
 uvicorn main:app --reload
 ```
 
-### 3. Iniciar la campaña
+### 2. Iniciar la campaña
+
+La misión ya no se escribe en un archivo: se construye automáticamente a partir
+de los parámetros del request.
 
 ```bash
 curl -X POST http://127.0.0.1:8000/campaign/start \
   -H "Content-Type: application/json" \
-  -d '{"target": "scanme.nmap.org"}'
+  -d '{
+    "target": "scanme.nmap.org",
+    "modo": "solo_reconocimiento",
+    "profundidad": "estandar"
+  }'
 ```
 
 ### 4. Esperar y monitorear
@@ -288,9 +320,11 @@ AuthenticationError: Incorrect API key provided
 ```
 Solución: Revisar que la variable de entorno `Deepseek` (o `DEEPSEEK_API_KEY`) está configurada y es válida.
 
-**Objetivo.txt vacío:**
-El sistema puede comportarse de forma errática si la misión está vacía.  
-Solución: Editar `orchestrator/objetivo.txt` con una misión clara antes de iniciar.
+**`modo` o `profundidad` con valor no reconocido:**
+```
+422 {"error": "valor_invalido", "campo": "modo", ...}
+```
+Solución: Usar uno de los valores del enum (`solo_reconocimiento`, `reconocimiento_vulnerabilidades`, `reconocimiento_explotacion`). Si se omite el campo, el sistema aplica el default automáticamente.
 
 ---
 
@@ -331,9 +365,9 @@ Puede ocurrir si la campaña fue detenida manualmente antes de que el Reporter t
 
 El sistema tiene un límite máximo de iteraciones para evitar loops infinitos (configurable en `agents/explorer.py`). Si el Juez rechaza siempre, puede ser porque:
 
-- La misión en `objetivo.txt` es muy exigente para lo que el target permite.
+- El `modo` elegido es muy exigente para lo que el target permite (ej. `reconocimiento_explotacion` en un host muy restrictivo).
 - El runner no está ejecutando herramientas exitosamente (verificar tasa de éxito en métricas).
-- La misión y el target no coinciden (ej. buscar flags en un host sin CTF activo).
+- Las restricciones y el target no coinciden (ej. `modo_ctf: true` en un host sin CTF activo).
 
 ---
 
@@ -401,7 +435,7 @@ Muestra cuántas tareas planificó el Explorador en cada iteración. Un número 
 | IA quería terminar, Juez insistió | El Explorador se rindió antes de tiempo; el Juez forzó más trabajo. |
 | IA quería seguir, Juez aprobó | El Juez consideró suficiente el trabajo aunque el Explorador quería continuar. |
 
-Un alto número de "Juez insistió" puede indicar que la misión en `objetivo.txt` es más exigente de lo que el Explorador infiere.
+Un alto número de "Juez insistió" puede indicar que el `modo` o la `profundidad` elegidos son más exigentes de lo que el Explorador logra cubrir con los vectores disponibles en el target.
 
 ### Gráfico: Éxito vs fallo por herramienta
 

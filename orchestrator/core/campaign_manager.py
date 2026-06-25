@@ -27,14 +27,21 @@ class CampañaDetenida(Exception):
     """Se lanza desde un checkpoint cuando se solicitó detener la campaña."""
 
 
-def run_campaign(target: str, sesion_id: int = SESION_ID, control: "CampaignManager | None" = None) -> str:
+def run_campaign(
+    target: str,
+    sesion_id: int = SESION_ID,
+    control: "CampaignManager | None" = None,
+    mision: str | None = None,
+) -> str:
     """Ejecuta el flujo completo de la campaña para un objetivo.
 
     Delega la orquestación en el Commander (`dirigir_campaña`), que decide qué
     fases/agentes actúan. `control`, si se entrega, se propaga para permitir
-    pausar o detener de forma cooperativa. Devuelve la ruta del reporte final.
+    pausar o detener de forma cooperativa. `mision` es el prompt de misión ya
+    construido; si es None, el Commander cae al fallback de `objetivo.txt`.
+    Devuelve la ruta del reporte final.
     """
-    return dirigir_campaña(target, sesion_id=sesion_id, control=control)
+    return dirigir_campaña(target, sesion_id=sesion_id, control=control, mision=mision)
 
 
 class CampaignManager:
@@ -51,13 +58,25 @@ class CampaignManager:
         self.estado = EstadoCampaña.INACTIVO
         self.target: str | None = None
         self.sesion_id: int = SESION_ID
+        self.mision: str | None = None
+        self.modo: str | None = None
+        self.profundidad: str | None = None
+        self.restricciones: dict | None = None
         self.iteracion_actual = 0
         self.ruta_reporte: str | None = None
         self.error: str | None = None
 
     # --- API de control (llamada desde los endpoints) ---
 
-    def iniciar(self, target: str, sesion_id: int = SESION_ID) -> None:
+    def iniciar(
+        self,
+        target: str,
+        sesion_id: int = SESION_ID,
+        mision: str | None = None,
+        modo: str | None = None,
+        profundidad: str | None = None,
+        restricciones: dict | None = None,
+    ) -> None:
         with self._lock:
             if self.estado in (EstadoCampaña.EJECUTANDO, EstadoCampaña.PAUSADO):
                 raise RuntimeError("Ya hay una campaña en curso. Deténla antes de iniciar otra.")
@@ -68,11 +87,15 @@ class CampaignManager:
             self.estado = EstadoCampaña.EJECUTANDO
             self.target = target
             self.sesion_id = sesion_id
+            self.mision = mision
+            self.modo = modo
+            self.profundidad = profundidad
+            self.restricciones = restricciones
             self.iteracion_actual = 0
             self.ruta_reporte = None
             self.error = None
 
-            self._hilo = threading.Thread(target=self._run, args=(target, sesion_id), daemon=True)
+            self._hilo = threading.Thread(target=self._run, args=(target, sesion_id, mision), daemon=True)
             self._hilo.start()
 
     def pausar(self) -> None:
@@ -104,6 +127,9 @@ class CampaignManager:
                 "estado": self.estado.value,
                 "target": self.target,
                 "sesion_id": self.sesion_id,
+                "modo": self.modo,
+                "profundidad": self.profundidad,
+                "restricciones": self.restricciones,
                 "iteracion_actual": self.iteracion_actual,
                 "ruta_reporte": self.ruta_reporte,
                 "error": self.error,
@@ -126,9 +152,9 @@ class CampaignManager:
 
     # --- Hilo de trabajo ---
 
-    def _run(self, target: str, sesion_id: int) -> None:
+    def _run(self, target: str, sesion_id: int, mision: str | None = None) -> None:
         try:
-            ruta = run_campaign(target, sesion_id=sesion_id, control=self)
+            ruta = run_campaign(target, sesion_id=sesion_id, control=self, mision=mision)
             with self._lock:
                 self.ruta_reporte = ruta
                 # Si se solicitó detener justo al final (sin checkpoint pendiente

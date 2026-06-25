@@ -66,8 +66,11 @@ Comprobación simple de que el servicio está vivo. No recibe parámetros.
 
 Todos los endpoints de control devuelven el **mismo objeto de estado**
 (`CampaignStatus`), producido por `campaign_manager.estado_actual()`. Es decir,
-`start`, `status`, `pause`, `resume` y `stop` retornan **siempre los 6 campos**:
-`estado`, `target`, `sesion_id`, `iteracion_actual`, `ruta_reporte`, `error`.
+`status`, `pause`, `resume` y `stop` retornan siempre los campos de estado. El
+endpoint `start` devuelve ese mismo objeto más el campo `advertencias`.
+
+> **Nota:** los campos `modo`, `profundidad` y `restricciones` son `null` mientras
+> no se haya iniciado ninguna campaña en la sesión actual.
 
 ---
 
@@ -78,52 +81,157 @@ corre en un **hilo de fondo**; este endpoint retorna de inmediato con el estado
 inicial (no espera a que termine).
 
 Flujo interno:
-1. Valida que no haya otra campaña `ejecutando` o `pausado` (si la hay → `409`).
-2. Resetea el estado y lanza el `CampaignManager` en un hilo daemon.
-3. El Commander dirige las fases (exploración → ... ) hasta que el Juez aprueba
+1. Valida el body (target, modo, profundidad, restricciones).
+2. Ensambla el prompt de misión con `construir_mision()`.
+3. Verifica que no haya otra campaña activa (si la hay → `409`).
+4. Lanza el `CampaignManager` en un hilo daemon.
+5. El Commander dirige las fases (exploración → ...) hasta que el Juez aprueba
    o se alcanza el máximo de iteraciones.
 
-#### Request body `requerido`
+#### Request body
 
 ```json
 {
-  "target": "scanme.nmap.org",
-  "sesion_id": 3
+  "target": "10.10.10.5",
+  "sesion_id": 3,
+  "modo": "reconocimiento_explotacion",
+  "profundidad": "estandar",
+  "restricciones": {
+    "no_pivoting": true,
+    "modo_ctf": false,
+    "flag_format": "FLAG{...}",
+    "solo_reportar_criticos": false,
+    "stealth": false
+  }
 }
 ```
 
-| Campo | Tipo | Requerido | Descripción |
-|---|---|---|---|
-| `target` | string | ✅ | IP o host objetivo, en entorno autorizado (ej: `192.168.1.1`, `example.com`). |
-| `sesion_id` | integer | ❌ | ID de sesión del runner. Por defecto el valor de `SESION_ID` en `config.py`. |
+| Campo | Tipo | Requerido | Default | Descripción |
+|---|---|---|---|---|
+| `target` | string | ✅ | — | IP o hostname del objetivo autorizado. |
+| `sesion_id` | integer | ❌ | valor de `config.py` | ID de sesión del runner. |
+| `modo` | string (enum) | ❌ | `"solo_reconocimiento"` | Modo de ataque (ver valores válidos). |
+| `profundidad` | string (enum) | ❌ | `"estandar"` | Nivel de profundidad (ver valores válidos). |
+| `restricciones` | object | ❌ | objeto con defaults | Restricciones activas para la campaña. |
+| `restricciones.no_pivoting` | boolean | ❌ | `true` | Prohíbe pivotar a otros hosts. |
+| `restricciones.modo_ctf` | boolean | ❌ | `false` | Activa búsqueda de flag CTF. |
+| `restricciones.flag_format` | string | ❌ | `"FLAG{...}"` | Formato de la flag (solo si `modo_ctf: true`). |
+| `restricciones.solo_reportar_criticos` | boolean | ❌ | `false` | Reportar pero no explotar servicios críticos. |
+| `restricciones.stealth` | boolean | ❌ | `false` | Minimizar ruido (IDS/IPS). |
+
+**Valores válidos para `modo`:**
+
+| Valor | Descripción |
+|---|---|
+| `"solo_reconocimiento"` | Solo mapear la superficie de ataque (default). |
+| `"reconocimiento_vulnerabilidades"` | Reconocimiento + análisis de CVEs y configuraciones inseguras. |
+| `"reconocimiento_explotacion"` | Ciclo completo: reconocimiento → vulnerabilidades → explotación. |
+
+**Valores válidos para `profundidad`:**
+
+| Valor | Descripción |
+|---|---|
+| `"superficial"` | Máx. 2 iteraciones, herramientas rápidas. |
+| `"estandar"` | Máx. 5 iteraciones, rango completo de herramientas (default). |
+| `"exhaustivo"` | Sin límite práctico, escaneo completo 1-65535, fuerza bruta. |
 
 #### Respuesta — `200 OK`
 
 ```json
 {
   "estado": "ejecutando",
-  "target": "scanme.nmap.org",
+  "target": "10.10.10.5",
   "sesion_id": 3,
+  "modo": "reconocimiento_explotacion",
+  "profundidad": "estandar",
+  "restricciones": {
+    "no_pivoting": true,
+    "modo_ctf": false,
+    "flag_format": "FLAG{...}",
+    "solo_reportar_criticos": false,
+    "stealth": false
+  },
   "iteracion_actual": 0,
   "ruta_reporte": null,
-  "error": null
+  "error": null,
+  "advertencias": []
+}
+```
+
+> Si `modo_ctf: true` y `flag_format` viene vacío, el sistema aplica el default
+> `"FLAG{...}"` sin bloquear la campaña, y devuelve la advertencia en el array:
+> ```json
+> "advertencias": [
+>   {
+>     "campo": "flag_format",
+>     "mensaje": "No se proporcionó formato de flag. Se usará el valor por defecto: FLAG{...}"
+>   }
+> ]
+> ```
+
+#### Respuesta — `422` — `target` ausente o vacío
+
+```json
+{
+  "error": "campo_requerido",
+  "campo": "target",
+  "mensaje": "El campo 'target' es obligatorio. Debes indicar la IP o el hostname del objetivo."
+}
+```
+
+#### Respuesta — `422` — `target` con formato inválido
+
+```json
+{
+  "error": "formato_invalido",
+  "campo": "target",
+  "mensaje": "El valor 'no-valido!!' no es una IP ni un hostname válido.",
+  "ejemplos_validos": ["10.10.10.5", "scanme.nmap.org", "192.168.1.100"]
+}
+```
+
+#### Respuesta — `422` — `modo` o `profundidad` con valor no reconocido
+
+```json
+{
+  "error": "valor_invalido",
+  "campo": "modo",
+  "valor_recibido": "full_attack",
+  "valores_validos": ["solo_reconocimiento", "reconocimiento_vulnerabilidades", "reconocimiento_explotacion"],
+  "mensaje": "Modo de ataque no reconocido. Se usará 'solo_reconocimiento' si omites este campo."
 }
 ```
 
 #### Respuesta — `409 Conflict`
 
-Ya hay una campaña en curso (estado `ejecutando` o `pausado`).
+Ya hay una campaña en estado `ejecutando` o `pausado`.
 
 ```json
 {
-  "detail": "Ya hay una campaña en curso. Deténla antes de iniciar otra."
+  "error": "campaña_en_curso",
+  "mensaje": "Ya hay una campaña activa. Detenla antes de iniciar una nueva.",
+  "estado_actual": {
+    "estado": "ejecutando",
+    "target": "10.10.10.5",
+    "iteracion_actual": 2
+  }
 }
 ```
 
-#### Respuesta — `422 Unprocessable Entity`
+#### Respuesta — `503 Service Unavailable`
 
-Body inválido (ej: falta `target`). La genera FastAPI automáticamente por la
-validación Pydantic.
+El runner no responde al iniciar (timeout o connection refused).
+
+```json
+{
+  "error": "runner_no_disponible",
+  "mensaje": "No se pudo conectar con el runner de herramientas. Verifica que los servicios del runner estén activos en los puertos 8003 y 8004.",
+  "puertos_esperados": {
+    "registry": 8003,
+    "executor": 8004
+  }
+}
+```
 
 ---
 
@@ -143,6 +251,15 @@ Ninguno.
   "estado": "ejecutando",
   "target": "scanme.nmap.org",
   "sesion_id": 3,
+  "modo": "solo_reconocimiento",
+  "profundidad": "estandar",
+  "restricciones": {
+    "no_pivoting": true,
+    "modo_ctf": false,
+    "flag_format": "FLAG{...}",
+    "solo_reportar_criticos": false,
+    "stealth": false
+  },
   "iteracion_actual": 2,
   "ruta_reporte": null,
   "error": null
@@ -158,6 +275,15 @@ Cuando termina, `ruta_reporte` apunta al `.md` generado:
   "estado": "finalizado",
   "target": "scanme.nmap.org",
   "sesion_id": 3,
+  "modo": "solo_reconocimiento",
+  "profundidad": "estandar",
+  "restricciones": {
+    "no_pivoting": true,
+    "modo_ctf": false,
+    "flag_format": "FLAG{...}",
+    "solo_reportar_criticos": false,
+    "stealth": false
+  },
   "iteracion_actual": 3,
   "ruta_reporte": "orchestrator/reports/reporte_2026-06-22_22-26-51.md",
   "error": null
@@ -173,6 +299,15 @@ Si la campaña falló, `estado` es `error` y `error` trae el detalle:
   "estado": "error",
   "target": "scanme.nmap.org",
   "sesion_id": 3,
+  "modo": "solo_reconocimiento",
+  "profundidad": "estandar",
+  "restricciones": {
+    "no_pivoting": true,
+    "modo_ctf": false,
+    "flag_format": "FLAG{...}",
+    "solo_reportar_criticos": false,
+    "stealth": false
+  },
   "iteracion_actual": 1,
   "ruta_reporte": null,
   "error": "ConnectionError: runner no disponible en http://127.0.0.1:8004"
@@ -204,6 +339,9 @@ próximo checkpoint (entre tareas), no instantáneamente. No se pierde estado.
   "estado": "pausado",
   "target": "scanme.nmap.org",
   "sesion_id": 3,
+  "modo": "solo_reconocimiento",
+  "profundidad": "estandar",
+  "restricciones": { "no_pivoting": true, "modo_ctf": false, "flag_format": "FLAG{...}", "solo_reportar_criticos": false, "stealth": false },
   "iteracion_actual": 2,
   "ruta_reporte": null,
   "error": null
@@ -211,8 +349,6 @@ próximo checkpoint (entre tareas), no instantáneamente. No se pierde estado.
 ```
 
 #### Respuesta — `409 Conflict`
-
-No hay una campaña en estado `ejecutando` que pausar.
 
 ```json
 {
@@ -233,6 +369,9 @@ Reanuda una campaña previamente pausada.
   "estado": "ejecutando",
   "target": "scanme.nmap.org",
   "sesion_id": 3,
+  "modo": "solo_reconocimiento",
+  "profundidad": "estandar",
+  "restricciones": { "no_pivoting": true, "modo_ctf": false, "flag_format": "FLAG{...}", "solo_reportar_criticos": false, "stealth": false },
   "iteracion_actual": 2,
   "ruta_reporte": null,
   "error": null
@@ -240,8 +379,6 @@ Reanuda una campaña previamente pausada.
 ```
 
 #### Respuesta — `409 Conflict`
-
-No hay una campaña en estado `pausado` que reanudar.
 
 ```json
 {
@@ -263,6 +400,9 @@ próximo checkpoint. El estado pasa a `detenido`.
   "estado": "detenido",
   "target": "scanme.nmap.org",
   "sesion_id": 3,
+  "modo": "solo_reconocimiento",
+  "profundidad": "estandar",
+  "restricciones": { "no_pivoting": true, "modo_ctf": false, "flag_format": "FLAG{...}", "solo_reportar_criticos": false, "stealth": false },
   "iteracion_actual": 2,
   "ruta_reporte": null,
   "error": null
@@ -270,8 +410,6 @@ próximo checkpoint. El estado pasa a `detenido`.
 ```
 
 #### Respuesta — `409 Conflict`
-
-No hay una campaña activa que detener.
 
 ```json
 {
@@ -411,9 +549,15 @@ Estado de una campaña. Lo devuelven todos los endpoints de control.
 | `estado` | string (enum) | `inactivo` ∣ `ejecutando` ∣ `pausado` ∣ `detenido` ∣ `finalizado` ∣ `error`. |
 | `target` | string ∣ null | Host/IP objetivo. |
 | `sesion_id` | integer | ID de sesión del runner. |
+| `modo` | string ∣ null | Modo de ataque de la campaña activa. |
+| `profundidad` | string ∣ null | Nivel de profundidad de la campaña activa. |
+| `restricciones` | object ∣ null | Restricciones activas (los 5 subcampos). |
 | `iteracion_actual` | integer | Iteración actual en ejecución. |
 | `ruta_reporte` | string ∣ null | Ruta del `.md` final (al finalizar). |
 | `error` | string ∣ null | Mensaje de error (si `estado == "error"`). |
+
+> El endpoint `POST /campaign/start` añade además `advertencias: array` a esta
+> respuesta. Los demás endpoints de control no incluyen ese campo.
 
 ### `ReporteResumen`
 
@@ -453,8 +597,9 @@ Extiende `ReporteResumen` con el contenido.
 |---|---|
 | `200 OK` | Operación exitosa. |
 | `404 Not Found` | `GET /campaign/reports/{id}` con un id inexistente o inválido. |
-| `409 Conflict` | Control de campaña en un estado incompatible (ej: iniciar con otra en curso, pausar sin campaña activa). |
-| `422 Unprocessable Entity` | Body inválido en `POST /campaign/start` (validación Pydantic). |
+| `409 Conflict` | Control de campaña en un estado incompatible (iniciar con otra en curso, pausar sin campaña activa, etc.). |
+| `422 Unprocessable Entity` | `target` ausente/vacío/inválido, o `modo`/`profundidad` con valor fuera del enum. El cuerpo de error detalla el campo concreto. |
+| `503 Service Unavailable` | El runner no responde al iniciar la campaña. |
 
 ---
 
@@ -467,5 +612,7 @@ Extiende `ReporteResumen` con el contenido.
 - **Estado en memoria:** no hay base de datos; el estado de la campaña vive en el
   proceso del orquestador. Reiniciar el servidor lo pierde (los reportes en disco
   persisten).
-- **Misión editable:** el `target` se pasa por la API, pero la *misión* se define
-  en `orchestrator/objetivo.txt` y se lee al iniciar cada campaña.
+- **Misión dinámica:** el prompt de misión se construye en tiempo de ejecución a
+  partir de `target`, `modo`, `profundidad` y `restricciones` recibidos en
+  `POST /campaign/start`. Ya no se usa `orchestrator/objetivo.txt` en el flujo
+  normal (se mantiene solo como override de emergencia).

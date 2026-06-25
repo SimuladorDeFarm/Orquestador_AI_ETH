@@ -55,10 +55,9 @@ SYSTEM_PROMPT_COMMANDER = (
 )
 
 
-def crear_comandante() -> CommanderAgent:
+def crear_comandante(mision: str) -> CommanderAgent:
     """Crea una instancia nueva del Comandante con la misión inyectada."""
-    objetivo = cargar_objetivo()
-    prompt = SYSTEM_PROMPT_COMMANDER + " OBJETIVO DE LA MISIÓN (scope): " + objetivo
+    prompt = SYSTEM_PROMPT_COMMANDER + " OBJETIVO DE LA MISIÓN (scope): " + mision
     return CommanderAgent(prompt)
 
 
@@ -79,8 +78,9 @@ def _fase_exploracion(target: str, sesion_id: int = SESION_ID, control=None, con
     if col is not None:
         col.set_fase("exploracion")
 
-    agente = crear_explorador(sesion_id=sesion_id, objetivo_target=target)
-    juez = crear_juez()
+    mision = (contexto or {}).get("mision", "")
+    agente = crear_explorador(sesion_id=sesion_id, objetivo_target=target, mision=mision)
+    juez = crear_juez(mision)
 
     reportes: list[str] = []
     i = 0
@@ -155,16 +155,18 @@ def construir_fases() -> dict[str, Fase]:
 
 # --- Flujo de dirección -----------------------------------------------------
 
-def dirigir_campaña(target: str, sesion_id: int = SESION_ID, control=None) -> str:
+def dirigir_campaña(target: str, sesion_id: int = SESION_ID, control=None, mision: str | None = None) -> str:
     """Punto de entrada del MAS: el Commander dirige la campaña de inicio a fin.
 
     `control`, si se entrega, se propaga a las fases para permitir pausar/detener
-    de forma cooperativa. Devuelve la ruta del reporte ejecutivo final.
+    de forma cooperativa. `mision` es el prompt de misión construido desde los
+    parámetros de la campaña; si no se entrega, cae al fallback de `objetivo.txt`.
+    Devuelve la ruta del reporte ejecutivo final.
     """
-    mision = cargar_objetivo()
+    mision = mision or cargar_objetivo()
     iniciar_coleccion(target, mision)
 
-    comandante = crear_comandante()
+    comandante = crear_comandante(mision)
     reportador = crear_reportador()
     scope = {"target": target, "mision": mision}
 
@@ -175,7 +177,9 @@ def dirigir_campaña(target: str, sesion_id: int = SESION_ID, control=None) -> s
     fases = construir_fases()
     completadas: list[str] = []
     reportes: list[str] = []
-    contexto: dict = {}  # estado compartido entre fases (p. ej. la KB de exploración)
+    # Estado compartido entre fases (p. ej. la KB de exploración). La misión
+    # viaja aquí para que cada fase la inyecte en sus agentes.
+    contexto: dict = {"mision": mision}
 
     try:
         while True:
