@@ -27,9 +27,18 @@ cd dani-eth
 python3 -m venv evn
 source evn/bin/activate
 pip install -r requirements.txt
-
-cp .env.example .env     # y agregar la API key de DeepSeek
 ```
+
+### 1.1 Configurar el entorno
+
+Copiá el archivo de ejemplo a `.env` y completá la API key de DeepSeek:
+
+```bash
+cd dani-eth
+cp .env.example .env     # luego editá .env y agregá tu API key de DeepSeek
+```
+
+> El `.env` está en `.gitignore` (no se sube). `.env.example` es la plantilla versionada con todas las variables.
 
 ### 2. Definir la misión
 
@@ -73,11 +82,14 @@ python3 -m agents.explorer
 
 ## Variables de entorno
 
+Ver la plantilla completa en [`.env.example`](.env.example):
+
 ```env
-Deepseek=sk-...                              # requerida
-RUNNER_REGISTRY_URL=http://127.0.0.1:8003    # opcional (default)
-RUNNER_EXECUTOR_URL=http://127.0.0.1:8004    # opcional (default)
-SESION_ID=3                                  # opcional (sesión del runner)
+Deepseek=sk-...                                          # requerida
+RUNNER_REGISTRY_URL=http://127.0.0.1:8003               # opcional (default)
+RUNNER_EXECUTOR_URL=http://127.0.0.1:8004               # opcional (default)
+SESION_ID=3                                             # opcional (sesión del runner)
+CORS_ORIGINS=http://localhost:5173,http://127.0.0.1:5173 # opcional (orígenes del frontend)
 ```
 
 ---
