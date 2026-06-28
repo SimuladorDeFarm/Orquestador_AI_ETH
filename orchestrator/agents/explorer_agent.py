@@ -2,6 +2,7 @@ import json
 from agents.iterable_agent import IterableAgent, _client, _tool_decidir
 from config import DEEPSEEK_MODEL
 from core.runner_client import ejecutar, formatear_resultado
+from core import event_bus
 from agents.summarizer_agent import memoria_vacia, formatear_memoria
 from metricas.collector import coleccion_activa
 
@@ -119,6 +120,16 @@ class ExplorerAgent(IterableAgent):
                   f"→ memoria: {len(memoria_txt)} chars]")
             print("-" * 50)
             print(memoria_txt)
+            event_bus.emitir(
+                "memory_update",
+                "summarizer",
+                {
+                    "comandos_acumulados": len(self.registro),
+                    "chars_crudo": crudo_acumulado,
+                    "chars_memoria": len(memoria_txt),
+                    "memoria": memoria_txt,
+                },
+            )
 
             col = coleccion_activa()
             if col is not None:
@@ -140,11 +151,22 @@ class ExplorerAgent(IterableAgent):
             herramienta = tarea_actual.get("herramienta")
             if not herramienta:
                 print(f"[SKIP] Tarea sin herramienta: {tarea_actual}")
+                event_bus.emitir("task_skipped", "explorer", {"numero": i + 1, "tarea": tarea_actual})
             else:
                 params = tarea_actual.get("params", {})
+                event_bus.emitir(
+                    "task_start",
+                    "explorer",
+                    {"numero": i + 1, "herramienta": herramienta, "params": params},
+                )
                 tarea_res = ejecutar(herramienta, params, self.sesion_id)
                 output = formatear_resultado(tarea_res)
                 print(output)
+                event_bus.emitir(
+                    "tool_result",
+                    "explorer",
+                    {"herramienta": herramienta, "params": params, "output": output, "chars": len(output)},
+                )
                 # El crudo se guarda aparte y la memoria se actualiza vía Summarizer;
                 # no se acumula en el contexto del agente.
                 self.ingerir(herramienta, params, output)
@@ -162,6 +184,7 @@ class ExplorerAgent(IterableAgent):
                 return (response.choices[0].message.content or "").strip()
             except Exception as e:
                 print(f"[ERROR DeepSeek] {e}")
+                event_bus.emitir("error", "explorer", {"origen": "preguntar", "mensaje": str(e)})
                 return None
 
         try:
@@ -173,6 +196,7 @@ class ExplorerAgent(IterableAgent):
             )
         except Exception as e:
             print(f"[ERROR DeepSeek] {e}")
+            event_bus.emitir("error", "explorer", {"origen": "preguntar", "mensaje": str(e)})
             return None
 
         choice = response.choices[0]
@@ -180,9 +204,24 @@ class ExplorerAgent(IterableAgent):
             tool_call = choice.message.tool_calls[0]
             args = json.loads(tool_call.function.arguments)
             print(f"[TOOL CALL] {tool_call.function.name} {args}")
+            event_bus.emitir(
+                "tool_call",
+                "explorer",
+                {"herramienta": args["herramienta"], "params": args.get("params", {})},
+            )
             tarea = ejecutar(args["herramienta"], args.get("params", {}), self.sesion_id)
             output = formatear_resultado(tarea)
             print(f"[RESULTADO]\n{output}")
+            event_bus.emitir(
+                "tool_result",
+                "explorer",
+                {
+                    "herramienta": args["herramienta"],
+                    "params": args.get("params", {}),
+                    "output": output,
+                    "chars": len(output),
+                },
+            )
             self.ingerir(args["herramienta"], args.get("params", {}), output)
             return output
         else:
@@ -200,12 +239,18 @@ class ExplorerAgent(IterableAgent):
             args = json.loads(tool_call.function.arguments)
             self.lista_tareas = args["tareas"]
             print(f"[TAREAS GENERADAS] {self.lista_tareas}")
+            event_bus.emitir(
+                "tasks_planned",
+                "explorer",
+                {"cantidad": len(self.lista_tareas), "tareas": self.lista_tareas},
+            )
             col = coleccion_activa()
             if col is not None:
                 col.registrar_tareas_generadas(len(self.lista_tareas))
             return self.lista_tareas
         except Exception as e:
             print(f"[ERROR generar_tareas] {e}")
+            event_bus.emitir("error", "explorer", {"origen": "generar_tareas", "mensaje": str(e)})
             return []
 
     def decidir_iteracion(self, mensaje: str) -> None:
@@ -225,13 +270,24 @@ class ExplorerAgent(IterableAgent):
                 self.continuar_iteracion = False
                 print("\n[DECISION] La IA eligió TERMINAR iteraciones.")
                 print(f"[RAZON] {args.get('razon', '')}")
+                event_bus.emitir(
+                    "iteration_decision",
+                    "explorer",
+                    {"continuar": False, "razon": args.get("razon", "")},
+                )
                 if col is not None:
                     col.registrar_decision_ia(continuar=False, razon=args.get("razon", ""))
             else:
                 razon = (choice.message.content or "").strip()
                 print("\n[DECISION] La IA eligió CONTINUAR iterando.")
                 print(f"[RAZON] {razon}")
+                event_bus.emitir(
+                    "iteration_decision",
+                    "explorer",
+                    {"continuar": True, "razon": razon},
+                )
                 if col is not None:
                     col.registrar_decision_ia(continuar=True, razon=razon)
         except Exception as e:
             print(f"[ERROR decidir_iteracion] {e}")
+            event_bus.emitir("error", "explorer", {"origen": "decidir_iteracion", "mensaje": str(e)})

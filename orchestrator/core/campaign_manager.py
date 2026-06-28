@@ -12,6 +12,7 @@ import threading
 
 from agents.commander import dirigir_campaña
 from config import SESION_ID
+from core import event_bus
 
 
 class EstadoCampaña(str, enum.Enum):
@@ -82,6 +83,8 @@ class CampaignManager:
                 raise RuntimeError("Ya hay una campaña en curso. Deténla antes de iniciar otra.")
 
             # Reset de estado y señales para una sesión limpia.
+            # Vacía el bus de eventos para no mezclar logs del run anterior.
+            event_bus.limpiar()
             self._evento_pausa.set()
             self._evento_stop.clear()
             self.estado = EstadoCampaña.EJECUTANDO

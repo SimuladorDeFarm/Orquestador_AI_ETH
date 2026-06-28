@@ -13,6 +13,7 @@ from pydantic import BaseModel, Field
 
 from core.campaign_manager import campaign_manager
 from core.reports_handler import listar_reportes, obtener_reporte
+from core import event_bus
 from config import SESION_ID, construir_mision
 
 router = APIRouter(prefix="/campaign", tags=["campaign"])
@@ -77,6 +78,21 @@ class ListaReportes(BaseModel):
 class ReporteCompleto(ReporteResumen):
     archivo_md: str = Field(..., description="Nombre del archivo .md")
     contenido: str = Field(..., description="Contenido completo del reporte en markdown")
+
+
+class EventoCampaña(BaseModel):
+    id: int = Field(..., description="Índice incremental del evento (sirve de cursor)")
+    timestamp: str = Field(..., description="Marca de tiempo ISO 8601 (UTC)")
+    tipo: str = Field(..., description="Tipo de evento (discrimina el componente visual)")
+    agente: str = Field(..., description="Agente que emitió el evento")
+    fase: str | None = Field(None, description="Fase activa de la campaña, si aplica")
+    iteracion: int | None = Field(None, description="Iteración Explorador↔Juez en curso, si aplica")
+    datos: dict = Field(default_factory=dict, description="Payload específico del tipo de evento")
+
+
+class LogsCampaña(BaseModel):
+    eventos: list[EventoCampaña] = Field(..., description="Eventos nuevos desde el cursor pedido")
+    total: int = Field(..., description="Total de eventos acumulados (próximo cursor a pedir)")
 
 
 @router.post("/start")
@@ -205,6 +221,19 @@ def detener():
 def estado():
     """Devuelve el estado actual del orquestador."""
     return campaign_manager.estado_actual()
+
+
+@router.get("/logs", response_model=LogsCampaña)
+def logs(desde: int = 0):
+    """Devuelve los eventos estructurados de la campaña desde el cursor `desde`.
+
+    Pensado para polling incremental desde el frontend: guarda el `total`
+    devuelto y pásalo como `desde` en la siguiente petición para recibir solo los
+    eventos nuevos. El bus se vacía al iniciar cada campaña, así que tras un
+    `start` el cursor vuelve a empezar en 0.
+    """
+    eventos = event_bus.obtener_desde(desde)
+    return {"eventos": eventos, "total": event_bus.total()}
 
 
 # --- Reportes ejecutivos ---------------------------------------------------

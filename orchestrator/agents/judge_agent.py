@@ -1,6 +1,7 @@
 import json
 from agents.base_agent import BaseAgent, _client
 from config import DEEPSEEK_MODEL
+from core import event_bus
 from metricas.collector import coleccion_activa
 
 _tool_aprobar = [
@@ -42,13 +43,16 @@ class JudgeAgent(BaseAgent):
                 self.aprueba = True
                 razon = args.get("razon", "")
                 print(f"\n[JUEZ] APROBADO — {razon}")
+                event_bus.emitir("judge_verdict", "judge", {"aprobado": True, "razon": razon})
                 if col is not None:
                     col.registrar_decision_juez(aprueba=True, razon=razon)
             else:
                 feedback = choice.message.content.strip()
                 print(f"\n[JUEZ] RECHAZADO — Se requiere otra iteración.")
                 print(f"[JUEZ] Feedback: {feedback}")
+                event_bus.emitir("judge_verdict", "judge", {"aprobado": False, "feedback": feedback})
                 if col is not None:
                     col.registrar_decision_juez(aprueba=False, razon=feedback)
         except Exception as e:
             print(f"[ERROR evaluar_reporte] {e}")
+            event_bus.emitir("error", "judge", {"origen": "evaluar_reporte", "mensaje": str(e)})

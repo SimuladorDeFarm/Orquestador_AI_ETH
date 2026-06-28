@@ -1,6 +1,7 @@
 import json
 from agents.base_agent import BaseAgent, _client
 from config import DEEPSEEK_MODEL
+from core import event_bus
 
 _tool_decidir = [
     {
@@ -40,8 +41,16 @@ class IterableAgent(BaseAgent):
                 self.continuar_iteracion = False
                 print(f"\n[DECISION] La IA eligió TERMINAR iteraciones.")
                 print(f"[RAZON] {args.get('razon', '')}")
+                event_bus.emitir(
+                    "iteration_decision",
+                    "explorer",
+                    {"continuar": False, "razon": args.get("razon", "")},
+                )
             else:
+                razon = choice.message.content.strip()
                 print(f"\n[DECISION] La IA eligió CONTINUAR iterando.")
-                print(f"[RAZON] {choice.message.content.strip()}")
+                print(f"[RAZON] {razon}")
+                event_bus.emitir("iteration_decision", "explorer", {"continuar": True, "razon": razon})
         except Exception as e:
             print(f"[ERROR decidir_iteracion] {e}")
+            event_bus.emitir("error", "explorer", {"origen": "decidir_iteracion", "mensaje": str(e)})

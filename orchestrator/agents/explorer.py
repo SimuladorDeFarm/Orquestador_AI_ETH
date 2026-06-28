@@ -5,6 +5,7 @@ from core.runner_client import (
     listar_herramientas,
     formatear_catalogo,
 )
+from core import event_bus
 from config import cargar_objetivo, SESION_ID
 
 
@@ -109,11 +110,13 @@ def explorador(agente: ExplorerAgent, target: str, primera_iteracion: bool = Tru
         print("\n" + "=" * 50)
         print("  FASE 1 — ESCANEO INICIAL")
         print("=" * 50)
+        event_bus.emitir("stage", "explorer", {"etapa": "escaneo_inicial"}, fase="exploracion")
         inicio_exploracion(agente, target)
     else:
         print("\n" + "=" * 50)
         print("  FASE 1 — GENERANDO NUEVAS TAREAS")
         print("=" * 50)
+        event_bus.emitir("stage", "explorer", {"etapa": "generando_tareas"}, fase="exploracion")
         agente.generar_tareas("Basándote en los hallazgos anteriores, genera las próximas tareas de exploración.")
 
     print("\n" + "=" * 50)
@@ -125,11 +128,13 @@ def explorador(agente: ExplorerAgent, target: str, primera_iteracion: bool = Tru
     print("\n" + "=" * 50)
     print("  FASE 2 — EJECUCIÓN DE TAREAS")
     print("=" * 50)
+    event_bus.emitir("stage", "explorer", {"etapa": "ejecucion_tareas"}, fase="exploracion")
     agente.ejecutar_tareas(control)
 
     print("\n" + "=" * 50)
     print("  FASE 3 — REPORTE")
     print("=" * 50)
+    event_bus.emitir("stage", "explorer", {"etapa": "reporte"}, fase="exploracion")
     prompt = (
         "Escribe el reporte markdown de hallazgos a partir de tu memoria de exploración. "
         "IMPORTANTE: en este momento NO tienes herramientas disponibles. No puedes llamar ejecutar_herramienta ni finalizar_iteracion. "
@@ -137,6 +142,7 @@ def explorador(agente: ExplorerAgent, target: str, primera_iteracion: bool = Tru
     )
     reporte = agente.preguntar(prompt, usar_tools=False)
     print(reporte)
+    event_bus.emitir("report_generated", "explorer", {"reporte": reporte}, fase="exploracion")
     return reporte
 
 

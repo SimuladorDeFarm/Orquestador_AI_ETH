@@ -15,6 +15,7 @@ from agents.exploiter import fase_explotacion
 from agents.judge import crear_juez
 from agents.reporter import crear_reportador
 from config import cargar_objetivo, SESION_ID
+from core import event_bus
 from metricas import iniciar_coleccion, finalizar_coleccion, coleccion_activa
 from metricas.reporte import generar_reporte_metricas
 
@@ -73,6 +74,12 @@ def _fase_exploracion(target: str, sesion_id: int = SESION_ID, control=None, con
     print("\n" + "#" * 60)
     print("  FASE: EXPLORACIÓN (RECONOCIMIENTO)")
     print("#" * 60)
+    event_bus.emitir(
+        "phase_start",
+        "commander",
+        {"fase": "exploracion", "descripcion": "Reconocimiento (black-box) del objetivo"},
+        fase="exploracion",
+    )
 
     col = coleccion_activa()
     if col is not None:
@@ -173,6 +180,7 @@ def dirigir_campaña(target: str, sesion_id: int = SESION_ID, control=None, misi
     print("\n" + "#" * 60)
     print(f"  COMMANDER — INICIO DE CAMPAÑA  (scope: {target})")
     print("#" * 60)
+    event_bus.emitir("campaign_start", "commander", {"target": target, "mision": mision})
 
     fases = construir_fases()
     completadas: list[str] = []
@@ -198,15 +206,31 @@ def dirigir_campaña(target: str, sesion_id: int = SESION_ID, control=None, misi
             completadas.append(nombre)
             # El Commander recibe el reporte de la fase antes de decidir la siguiente.
             print(f"\n[COMMANDER] Fase '{nombre}' completada — {len(nuevos)} reporte(s) recibido(s).")
+            event_bus.emitir(
+                "phase_end",
+                "commander",
+                {"fase": nombre, "reportes_recibidos": len(nuevos)},
+                fase=nombre,
+            )
 
         print("\n" + "=" * 50)
         print("  REPORTE EJECUTIVO FINAL")
         print("=" * 50)
         ruta = reportador.generar_reporte(reportes, target=target, mision=mision)
         print(f"Reporte guardado en: {ruta}")
+        event_bus.emitir(
+            "campaign_end",
+            "commander",
+            {"ruta_reporte": ruta, "fases_completadas": completadas, "total_reportes": len(reportes)},
+        )
         return ruta
     except BaseException as e:
         # Si la campaña se detiene o falla, deja registro del motivo en las métricas.
+        event_bus.emitir(
+            "campaign_aborted",
+            "commander",
+            {"motivo": type(e).__name__, "detalle": str(e)},
+        )
         col = coleccion_activa()
         if col is not None and not col.motivo_termino:
             col.set_resultado(type(e).__name__, exito=False)

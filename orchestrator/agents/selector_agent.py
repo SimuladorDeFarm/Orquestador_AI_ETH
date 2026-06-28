@@ -12,6 +12,7 @@ lo usa cualquier agente que lance comandos (Explorador, Explotador).
 import json
 from agents.base_agent import BaseAgent, _client
 from config import DEEPSEEK_MODEL
+from core import event_bus
 
 
 def _render_catalogo(catalogo: list[dict]) -> str:
@@ -91,9 +92,25 @@ class SelectorAgent(BaseAgent):
             seleccion = [h for h in catalogo if h.get("nombre") in elegidas]
             if not seleccion:
                 print(f"[SELECTOR] selección vacía → fallback: uso TODAS ({nombres})")
+                event_bus.emitir(
+                    "tool_selection",
+                    "selector",
+                    {"rol": rol, "elegidas": nombres, "fallback": True, "razon": "selección vacía → uso todas"},
+                )
                 return catalogo
+            event_bus.emitir(
+                "tool_selection",
+                "selector",
+                {"rol": rol, "elegidas": elegidas, "fallback": False, "razon": args.get("razon", "")},
+            )
             return seleccion
         except Exception as e:
             print(f"[ERROR seleccionar] {e}")
             print(f"[SELECTOR] fallback por error → uso TODAS ({nombres})")
+            event_bus.emitir("error", "selector", {"origen": "seleccionar", "mensaje": str(e)})
+            event_bus.emitir(
+                "tool_selection",
+                "selector",
+                {"rol": rol, "elegidas": nombres, "fallback": True, "razon": "error → uso todas"},
+            )
             return catalogo

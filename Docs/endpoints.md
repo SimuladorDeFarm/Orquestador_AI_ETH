@@ -37,6 +37,7 @@ los reportes generados.
 | `POST` | `/campaign/pause` | Pausa la campaña en curso. |
 | `POST` | `/campaign/resume` | Reanuda una campaña pausada. |
 | `POST` | `/campaign/stop` | Detiene la campaña en curso. |
+| `GET`  | `/campaign/logs` | Eventos estructurados de la campaña (timeline en vivo). |
 | `GET`  | `/campaign/reports` | Lista todos los reportes generados. |
 | `GET`  | `/campaign/reports/{id}` | Devuelve un reporte completo por su id. |
 
@@ -419,6 +420,100 @@ próximo checkpoint. El estado pasa a `detenido`.
 
 ---
 
+### `GET /campaign/logs`
+
+Devuelve la **timeline de eventos estructurados** que los agentes emiten durante
+la campaña (inicio, planificación de tareas, llamadas a herramientas, resultados,
+actualizaciones de memoria, veredictos del Juez, etc.). Es la alternativa
+consumible por el frontend al volcado de texto que el orquestador imprime por
+consola: en vez de un log plano, cada evento es un objeto tipado que el frontend
+mapea a un componente visual distinto.
+
+> **Sin WebSocket ni push.** El orquestador no empuja eventos; el frontend hace
+> **polling incremental** con un cursor. Mismo patrón que `GET /campaign/status`.
+
+#### Parámetros (query)
+
+| Nombre | Tipo | En | Requerido | Default | Descripción |
+|---|---|---|---|---|---|
+| `desde` | integer | query | ❌ | `0` | Cursor: devuelve solo los eventos cuyo `id` es `>= desde`. |
+
+#### Cómo se usa (polling incremental)
+
+1. Tras `POST /campaign/start`, el bus de eventos se **vacía**, así que el cursor
+   reinicia en `0`.
+2. Llama a `GET /campaign/logs?desde=0`. Guarda el campo `total` devuelto.
+3. En la siguiente llamada usa ese `total` como `desde`
+   (`GET /campaign/logs?desde=<total>`): recibes solo los eventos nuevos.
+4. Repite cada ~2-3 s mientras `GET /campaign/status` indique `ejecutando` o
+   `pausado`. Detén el polling cuando el estado sea `finalizado`, `detenido` o
+   `error`.
+
+> El `id` de cada evento es estable e incremental dentro de una misma campaña, por
+> lo que sirve a la vez de identificador y de cursor.
+
+#### Respuesta — `200 OK`
+
+```json
+{
+  "eventos": [
+    {
+      "id": 0,
+      "timestamp": "2026-06-27T15:30:01.123456+00:00",
+      "tipo": "campaign_start",
+      "agente": "commander",
+      "fase": null,
+      "iteracion": null,
+      "datos": { "target": "scanme.nmap.org", "mision": "Encuentra 1 flag..." }
+    },
+    {
+      "id": 1,
+      "timestamp": "2026-06-27T15:30:08.654321+00:00",
+      "tipo": "tool_call",
+      "agente": "explorer",
+      "fase": "exploracion",
+      "iteracion": 1,
+      "datos": { "herramienta": "nmap", "params": { "target": "scanme.nmap.org" } }
+    }
+  ],
+  "total": 2
+}
+```
+
+Si no hay eventos (campaña nunca iniciada, o `desde` mayor al total actual), la
+respuesta es `{ "eventos": [], "total": <n> }`.
+
+#### Catálogo de tipos de evento
+
+Cada evento tiene un campo `tipo` que define cómo renderizarlo. El campo `datos`
+varía según el tipo:
+
+| `tipo` | `agente` | Cuándo se emite | `datos` |
+|---|---|---|---|
+| `campaign_start` | `commander` | Al iniciar la campaña. | `target`, `mision` |
+| `phase_start` | `commander` | Al entrar en una fase (ej. exploración). | `fase`, `descripcion` |
+| `phase_end` | `commander` | Al completar una fase. | `fase`, `reportes_recibidos` |
+| `campaign_end` | `commander` | Al generar el reporte ejecutivo final. | `ruta_reporte`, `fases_completadas`, `total_reportes` |
+| `campaign_aborted` | `commander` | La campaña se detuvo o falló (stop/excepción). | `motivo`, `detalle` |
+| `tool_selection` | `selector` | El Selector eligió el pool de herramientas. | `rol`, `elegidas`, `fallback`, `razon` |
+| `stage` | `explorer` | Cambio de sub-etapa dentro de una iteración. | `etapa` (`escaneo_inicial` ∣ `generando_tareas` ∣ `ejecucion_tareas` ∣ `reporte`) |
+| `tasks_planned` | `explorer` | Se planificó la lista de tareas. | `cantidad`, `tareas` |
+| `task_start` | `explorer` | Empieza la ejecución de una tarea. | `numero`, `herramienta`, `params` |
+| `task_skipped` | `explorer` | Una tarea sin herramienta se omitió. | `numero`, `tarea` |
+| `tool_call` | `explorer` | El LLM invocó una herramienta vía tool calling. | `herramienta`, `params` |
+| `tool_result` | `explorer` | Resultado crudo de una herramienta del runner. | `herramienta`, `params`, `output`, `chars` |
+| `memory_update` | `summarizer` | La KB se actualizó tras un comando. | `comandos_acumulados`, `chars_crudo`, `chars_memoria`, `memoria` |
+| `report_generated` | `explorer` | Reporte markdown de una iteración. | `reporte` |
+| `iteration_decision` | `explorer` | La IA decide continuar o terminar de iterar. | `continuar`, `razon` |
+| `judge_verdict` | `judge` | El Juez aprueba o rechaza el reporte de iteración. | `aprobado`, y `razon` (si aprueba) ∣ `feedback` (si rechaza) |
+| `error` | `*` | Falló una llamada al LLM o a un agente. | `origen`, `mensaje` |
+
+> **Nota.** El catálogo puede crecer al añadirse nuevos agentes (ej. el Explotador).
+> El frontend debe **ignorar de forma segura los `tipo` que no reconozca** en vez
+> de fallar.
+
+---
+
 ## Reportes
 
 Acceso a los reportes ejecutivos que el orquestador guarda en
@@ -558,6 +653,29 @@ Estado de una campaña. Lo devuelven todos los endpoints de control.
 
 > El endpoint `POST /campaign/start` añade además `advertencias: array` a esta
 > respuesta. Los demás endpoints de control no incluyen ese campo.
+
+### `EventoCampaña`
+
+Un evento de la timeline de la campaña.
+
+| Campo | Tipo | Descripción |
+|---|---|---|
+| `id` | integer | Índice incremental del evento. Sirve de cursor. |
+| `timestamp` | string | Marca de tiempo ISO 8601 en UTC. |
+| `tipo` | string | Tipo de evento (ver catálogo en `GET /campaign/logs`). |
+| `agente` | string | Agente que lo emitió (`commander`, `explorer`, `judge`, `selector`, `summarizer`). |
+| `fase` | string ∣ null | Fase activa de la campaña (ej. `exploracion`), si aplica. |
+| `iteracion` | integer ∣ null | Iteración Explorador↔Juez en curso, si aplica. |
+| `datos` | object | Payload específico del tipo de evento. |
+
+### `LogsCampaña`
+
+Envoltorio de la respuesta de `GET /campaign/logs`.
+
+| Campo | Tipo | Descripción |
+|---|---|---|
+| `eventos` | array[`EventoCampaña`] | Eventos nuevos desde el cursor pedido. |
+| `total` | integer | Total de eventos acumulados. Úsalo como `desde` en la siguiente petición. |
 
 ### `ReporteResumen`
 
