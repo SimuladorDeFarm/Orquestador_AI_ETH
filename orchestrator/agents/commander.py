@@ -10,7 +10,7 @@ CommanderAgent no necesita cambios.
 """
 
 from agents.commander_agent import CommanderAgent, Fase
-from agents.explorer import crear_explorador, explorador, decidir_iteracion
+from agents.explorer import crear_explorador, explorador, decidir_iteracion, reporte_parcial
 from agents.exploiter import fase_explotacion
 from agents.judge import crear_juez
 from agents.reporter import crear_reportador
@@ -85,48 +85,70 @@ def _fase_exploracion(target: str, sesion_id: int = SESION_ID, control=None, con
     if col is not None:
         col.set_fase("exploracion")
 
+    # Import diferido para evitar el ciclo commander <-> campaign_manager.
+    from core.campaign_manager import CampañaDetenida
+
     mision = (contexto or {}).get("mision", "")
     agente = crear_explorador(sesion_id=sesion_id, objetivo_target=target, mision=mision)
     juez = crear_juez(mision)
 
+    # Acumulador compartido: los reportes se registran aquí a medida que se
+    # completan, para que el Reportador pueda incluir los hallazgos parciales
+    # aunque la campaña se detenga a mitad de la fase.
+    acumulador = contexto.setdefault("reportes", []) if contexto is not None else []
     reportes: list[str] = []
     i = 0
-    while not juez.aprueba and i < MAX_ITERACIONES_EXPLORACION:
-        if control is not None:
-            control.checkpoint()
-            control.set_iteracion(i + 1)
+    detenida = False
+    try:
+        while not juez.aprueba and i < MAX_ITERACIONES_EXPLORACION:
+            if control is not None:
+                control.checkpoint()
+                control.set_iteracion(i + 1)
+            if col is not None:
+                col.iniciar_iteracion(i + 1)
+
+            reporte = explorador(agente, target, primera_iteracion=(i == 0), control=control)
+            reportes.append(reporte)
+            acumulador.append(reporte)
+            i += 1
+
+            decidir_iteracion(agente)
+
+            print("\n" + "=" * 50)
+            print("  JUEZ — EVALUACIÓN DEL REPORTE")
+            print("=" * 50)
+            juez.evaluar_reporte(reporte)
+    except CampañaDetenida:
+        # Detención cooperativa: rescata los hallazgos de la iteración en curso
+        # antes de propagar, para que el reporte final no los pierda.
+        detenida = True
+        print("\n[EXPLORACIÓN] Campaña detenida; generando un reporte parcial desde la memoria...")
+        try:
+            parcial = reporte_parcial(agente)
+            if parcial:
+                reportes.append(parcial)
+                acumulador.append(parcial)
+        except Exception as e:  # noqa: BLE001 - el reporte parcial es best-effort
+            print(f"[EXPLORACIÓN] No se pudo generar el reporte parcial: {e}")
+        raise
+    finally:
+        # Deja los hallazgos a disposición de la fase de explotación.
+        if contexto is not None:
+            contexto["memoria_exploracion"] = agente.memoria
+
+        # Cierre de la fase: registra cobertura y motivo de término para las métricas.
         if col is not None:
-            col.iniciar_iteracion(i + 1)
-
-        reporte = explorador(agente, target, primera_iteracion=(i == 0), control=control)
-        reportes.append(reporte)
-        i += 1
-
-        decidir_iteracion(agente)
-
-        print("\n" + "=" * 50)
-        print("  JUEZ — EVALUACIÓN DEL REPORTE")
-        print("=" * 50)
-        juez.evaluar_reporte(reporte)
-
-    # Deja los hallazgos a disposición de la fase de explotación.
-    if contexto is not None:
-        contexto["memoria_exploracion"] = agente.memoria
-
-    # Cierre de la fase: registra cobertura y motivo de término para las métricas.
-    if col is not None:
-        col.set_memoria_final(agente.memoria)
-        if juez.aprueba:
-            redundancia = "redundan" in (col.ultima_razon_juez or "").lower()
-            motivo = "juez_aprobo_redundancia" if redundancia else "juez_aprobo_exito"
-            exito = not redundancia
-        else:
-            motivo = "limite_iteraciones"
-            exito = False
-        # Encontrar una flag se considera éxito aunque el cierre fuera por otra vía.
-        if agente.memoria.get("flags"):
-            exito = True
-        col.set_resultado(motivo, exito)
+            col.set_memoria_final(agente.memoria)
+            if detenida:
+                col.set_resultado("detenido_usuario", exito=bool(agente.memoria.get("flags")))
+            elif juez.aprueba:
+                redundancia = "redundan" in (col.ultima_razon_juez or "").lower()
+                motivo = "juez_aprobo_redundancia" if redundancia else "juez_aprobo_exito"
+                # Encontrar una flag se considera éxito aunque el cierre fuera por otra vía.
+                exito = (not redundancia) or bool(agente.memoria.get("flags"))
+                col.set_resultado(motivo, exito)
+            else:
+                col.set_resultado("limite_iteraciones", exito=bool(agente.memoria.get("flags")))
 
     return reportes
 
@@ -182,50 +204,77 @@ def dirigir_campaña(target: str, sesion_id: int = SESION_ID, control=None, misi
     print("#" * 60)
     event_bus.emitir("campaign_start", "commander", {"target": target, "mision": mision})
 
+    # Import diferido para evitar el ciclo commander <-> campaign_manager.
+    from core.campaign_manager import CampañaDetenida
+
     fases = construir_fases()
     completadas: list[str] = []
     reportes: list[str] = []
     # Estado compartido entre fases (p. ej. la KB de exploración). La misión
-    # viaja aquí para que cada fase la inyecte en sus agentes.
-    contexto: dict = {"mision": mision}
+    # viaja aquí para que cada fase la inyecte en sus agentes. `reportes` es el
+    # mismo objeto que el acumulador de las fases: así, si la campaña se detiene
+    # a mitad de una fase, los reportes ya completados (y el parcial de rescate)
+    # siguen disponibles para el reporte ejecutivo.
+    contexto: dict = {"mision": mision, "reportes": reportes}
+    detenida = False
 
     try:
-        while True:
-            pendientes = [f for nombre, f in fases.items() if nombre not in completadas]
-            if not pendientes:
-                print("\n[COMMANDER] No quedan fases pendientes.")
-                break
+        try:
+            while True:
+                pendientes = [f for nombre, f in fases.items() if nombre not in completadas]
+                if not pendientes:
+                    print("\n[COMMANDER] No quedan fases pendientes.")
+                    break
 
-            nombre = comandante.decidir_fase(scope, pendientes, completadas, reportes)
-            if nombre is None:
-                break
+                nombre = comandante.decidir_fase(scope, pendientes, completadas, reportes)
+                if nombre is None:
+                    break
 
-            fase = fases[nombre]
-            nuevos = fase.ejecutar(target, sesion_id, control, contexto)
-            reportes.extend(nuevos)
-            completadas.append(nombre)
-            # El Commander recibe el reporte de la fase antes de decidir la siguiente.
-            print(f"\n[COMMANDER] Fase '{nombre}' completada — {len(nuevos)} reporte(s) recibido(s).")
+                fase = fases[nombre]
+                # Las fases acumulan sus reportes en contexto["reportes"] (== reportes).
+                nuevos = fase.ejecutar(target, sesion_id, control, contexto)
+                completadas.append(nombre)
+                # El Commander recibe el reporte de la fase antes de decidir la siguiente.
+                print(f"\n[COMMANDER] Fase '{nombre}' completada — {len(nuevos)} reporte(s) recibido(s).")
+                event_bus.emitir(
+                    "phase_end",
+                    "commander",
+                    {"fase": nombre, "reportes_recibidos": len(nuevos)},
+                    fase=nombre,
+                )
+        except CampañaDetenida:
+            # Detención solicitada por el usuario: NO se aborta la campaña. Se cae
+            # al reporte ejecutivo con los hallazgos acumulados hasta ahora.
+            detenida = True
+            print("\n[COMMANDER] Campaña detenida por el usuario; se generará un reporte con los hallazgos hasta ahora.")
             event_bus.emitir(
-                "phase_end",
+                "campaign_stopped",
                 "commander",
-                {"fase": nombre, "reportes_recibidos": len(nuevos)},
-                fase=nombre,
+                {"reportes_acumulados": len(reportes), "fases_completadas": completadas},
             )
+            col = coleccion_activa()
+            if col is not None and not col.motivo_termino:
+                col.set_resultado("detenido_usuario", exito=False)
 
         print("\n" + "=" * 50)
-        print("  REPORTE EJECUTIVO FINAL")
+        print("  REPORTE EJECUTIVO" + (" (PARCIAL — CAMPAÑA DETENIDA)" if detenida else " FINAL"))
         print("=" * 50)
         ruta = reportador.generar_reporte(reportes, target=target, mision=mision)
         print(f"Reporte guardado en: {ruta}")
         event_bus.emitir(
             "campaign_end",
             "commander",
-            {"ruta_reporte": ruta, "fases_completadas": completadas, "total_reportes": len(reportes)},
+            {
+                "ruta_reporte": ruta,
+                "fases_completadas": completadas,
+                "total_reportes": len(reportes),
+                "detenida": detenida,
+            },
         )
         return ruta
     except BaseException as e:
-        # Si la campaña se detiene o falla, deja registro del motivo en las métricas.
+        # Cualquier otro fallo (no la detención cooperativa): deja registro del
+        # motivo en las métricas y propaga.
         event_bus.emitir(
             "campaign_aborted",
             "commander",

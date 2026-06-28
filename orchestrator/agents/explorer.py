@@ -96,6 +96,23 @@ def decidir_iteracion(agente: ExplorerAgent) -> None:
     )
 
 
+def reporte_parcial(agente) -> str:
+    """Genera un reporte markdown desde la memoria actual del agente, sin más ejecución.
+
+    Se usa cuando la campaña se detiene a mitad de una fase: rescata los hallazgos
+    acumulados en la KB hasta el checkpoint para que no se pierdan y el Reportador
+    pueda incluirlos en el reporte ejecutivo. Sirve para Explorador y Explotador
+    (ambos exponen `preguntar(mensaje, usar_tools=False)`).
+    """
+    prompt = (
+        "La campaña se detuvo a petición del usuario. Escribe un reporte markdown con los "
+        "hallazgos acumulados en tu memoria hasta este momento (servicios, rutas, archivos, "
+        "flags y cualquier dato relevante). "
+        "NO tienes herramientas disponibles: limítate a escribir texto markdown."
+    )
+    return agente.preguntar(prompt, usar_tools=False) or ""
+
+
 def inicio_exploracion(agente: ExplorerAgent, target: str) -> None:
     agente.preguntar(
         f"Haz un escaneo de reconocimiento inicial con nmap sobre el objetivo {target}. "
